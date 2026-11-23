@@ -189,13 +189,14 @@ namespace OxGFrame.Hotfixer
 
             if (!this._isCheck)
             {
-                this._isCheck = true;
-
                 // Hotfix params
                 this.packageName = string.IsNullOrEmpty(packageName) ? packageInfoWithBuild.packageName : packageName;
                 this.packageInfoWithBuild = packageInfoWithBuild;
                 this._aotAssemblies = aotAssemblies;
                 this._hotfixAssemblies = hotfixAssemblies;
+
+                // 需在參數設置完成後才標記，避免參數無效而拋出異常時，標記殘留導致後續皆無法再次檢查 (只能透過 Reset 還原)
+                this._isCheck = true;
 
                 // Run hotfix procedure
                 this._hotfixFsm.Run<HotfixFsmStates.FsmHotfixPrepare>();

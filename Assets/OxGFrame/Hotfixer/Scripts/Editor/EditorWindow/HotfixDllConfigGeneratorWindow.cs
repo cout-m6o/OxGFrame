@@ -37,6 +37,11 @@ namespace OxGFrame.Hotfixer.Editor
         private SerializedProperty _hotfixDllsPty;
         private SerializedProperty _hotfixDllPlansPty;
 
+        /// <summary>
+        /// 背景樣式緩存 (Key 為色碼，所建立的貼圖於 OnDisable 時銷毀)
+        /// </summary>
+        private readonly Dictionary<string, GUIStyle> _backgroundStyles = new Dictionary<string, GUIStyle>();
+
         internal static string projectPath;
         internal static string keySaver;
 
@@ -56,6 +61,13 @@ namespace OxGFrame.Hotfixer.Editor
 
         private void OnEnable()
         {
+            // Domain Reload (重新編譯、進入 Play Mode) 或 Layout 還原後，靜態欄位會被清空，需補回儲存鍵值 (與 ShowWindow 相同)
+            if (string.IsNullOrEmpty(keySaver))
+            {
+                projectPath = Application.dataPath;
+                keySaver = $"{projectPath}_{nameof(HotfixDllConfigGeneratorWindow)}";
+            }
+
             this._serObj = new SerializedObject(this);
             this._aotDllsPty = this._serObj.FindProperty("aotDlls");
             this._hotfixDllsPty = this._serObj.FindProperty("hotfixDlls");
@@ -72,9 +84,42 @@ namespace OxGFrame.Hotfixer.Editor
 
             // Preset Hotfix Dll Plans
             string jsonHotfixDllPlans = EditorStorage.GetData(keySaver, "hotfixDllPlans", string.Empty);
+            // 內容為 null 的 Json 會反序列化為 null，需以空列表取代 (避免後續 OnGUI 拋出 NullReferenceException)
             if (!string.IsNullOrEmpty(jsonHotfixDllPlans))
-                this.hotfixDllPlans = JsonConvert.DeserializeObject<List<HotfixDllPlan>>(jsonHotfixDllPlans);
+                this.hotfixDllPlans = JsonConvert.DeserializeObject<List<HotfixDllPlan>>(jsonHotfixDllPlans) ?? new List<HotfixDllPlan>();
             this._choicePlanIndex = Convert.ToInt32(EditorStorage.GetData(keySaver, "_choicePlanIndex", "0"));
+        }
+
+        private void OnDisable()
+        {
+            // 銷毀背景樣式緩存所建立的貼圖 (HideAndDontSave 的貼圖需自行銷毀)
+            foreach (var style in this._backgroundStyles.Values)
+            {
+                if (style.normal.background != null) DestroyImmediate(style.normal.background);
+            }
+            this._backgroundStyles.Clear();
+        }
+
+        /// <summary>
+        /// 取得純色背景樣式 (依色碼緩存 1x1 貼圖的樣式，避免每次 OnGUI 事件重複建立)
+        /// </summary>
+        /// <param name="htmlColor"></param>
+        /// <returns></returns>
+        private GUIStyle _GetBackgroundStyle(string htmlColor)
+        {
+            // 緩存的貼圖失效時 (例如已被銷毀)，會重新建立
+            if (this._backgroundStyles.TryGetValue(htmlColor, out GUIStyle style) && style.normal.background != null) return style;
+
+            style = new GUIStyle();
+            var bg = new Texture2D(1, 1);
+            bg.hideFlags = HideFlags.HideAndDontSave;
+            ColorUtility.TryParseHtmlString(htmlColor, out Color color);
+            bg.SetPixel(0, 0, color);
+            bg.Apply();
+            style.normal.background = bg;
+            this._backgroundStyles[htmlColor] = style;
+
+            return style;
         }
 
         private void OnGUI()
@@ -87,13 +132,7 @@ namespace OxGFrame.Hotfixer.Editor
         {
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
             centeredStyle.alignment = TextAnchor.UpperCenter;
@@ -182,8 +221,9 @@ namespace OxGFrame.Hotfixer.Editor
             GUILayout.FlexibleSpace();
 
             // auto reveal toggle
+            EditorGUI.BeginChangeCheck();
             this.autoReveal = GUILayout.Toggle(this.autoReveal, new GUIContent("Auto Reveal", "If checked, after process will reveal destination folder."));
-            EditorStorage.SaveData(keySaver, "autoReveal", this.autoReveal.ToString());
+            if (EditorGUI.EndChangeCheck()) EditorStorage.SaveData(keySaver, "autoReveal", this.autoReveal.ToString());
 
             // process button
             Color bc = GUI.backgroundColor;
@@ -219,13 +259,7 @@ namespace OxGFrame.Hotfixer.Editor
 
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#263840", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#263840");
             EditorGUILayout.BeginVertical(style);
 
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
@@ -254,7 +288,8 @@ namespace OxGFrame.Hotfixer.Editor
             // Load selection button
             Color bc = GUI.backgroundColor;
             GUI.backgroundColor = new Color32(83, 152, 255, 255);
-            if (GUILayout.Button("Copy Current", GUILayout.MaxWidth(100f)))
+            // 無任何 Plan 時不處理，並先將索引修正至有效範圍內 (避免以超出範圍的索引存取 Plans)
+            if (GUILayout.Button("Copy Current", GUILayout.MaxWidth(100f)) && this._ClampChoicePlanIndex())
             {
                 bool confirmation = EditorUtility.DisplayDialog
                 (
@@ -343,9 +378,27 @@ namespace OxGFrame.Hotfixer.Editor
             EditorGUILayout.EndScrollView();
         }
 
+        /// <summary>
+        /// 將 Plan 索引修正至有效範圍內 (Plans 被移除後，索引可能殘留於範圍外)，無任何 Plan 時返回 false
+        /// </summary>
+        /// <returns></returns>
+        private bool _ClampChoicePlanIndex()
+        {
+            if (this.hotfixDllPlans.Count == 0) return false;
+
+            int choicePlanIndex = Mathf.Clamp(this._choicePlanIndex, 0, this.hotfixDllPlans.Count - 1);
+            if (choicePlanIndex != this._choicePlanIndex)
+            {
+                this._choicePlanIndex = choicePlanIndex;
+                EditorStorage.SaveData(keySaver, "_choicePlanIndex", this._choicePlanIndex.ToString());
+            }
+
+            return true;
+        }
+
         private void _LoadHotfixDllPlanToCurrent()
         {
-            if (this.hotfixDllPlans.Count == 0) return;
+            if (!this._ClampChoicePlanIndex()) return;
 
             var plan = this.hotfixDllPlans[this._choicePlanIndex];
 
@@ -361,7 +414,7 @@ namespace OxGFrame.Hotfixer.Editor
 
         private void _CopyCurrentToHotfixDllPlan()
         {
-            if (this.hotfixDllPlans.Count == 0) return;
+            if (!this._ClampChoicePlanIndex()) return;
 
             var plan = this.hotfixDllPlans[this._choicePlanIndex];
 
@@ -399,7 +452,8 @@ namespace OxGFrame.Hotfixer.Editor
             {
                 EditorStorage.SaveData(keySaver, $"hotfixDllPlanFilePath", Path.GetDirectoryName(filePath));
                 string json = File.ReadAllText(filePath);
-                this.hotfixDllPlans = JsonConvert.DeserializeObject<List<HotfixDllPlan>>(json);
+                // 空檔案或內容為 null 的 Json 會反序列化為 null，需以空列表取代 (避免後續 OnGUI 拋出 NullReferenceException)
+                this.hotfixDllPlans = JsonConvert.DeserializeObject<List<HotfixDllPlan>>(json) ?? new List<HotfixDllPlan>();
 
                 // Resave hotfix dll plans without format
                 json = JsonConvert.SerializeObject(this.hotfixDllPlans);

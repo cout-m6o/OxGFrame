@@ -104,11 +104,12 @@ namespace OxGFrame.Hotfixer
 
         /// <summary>
         /// 獲取 WWW StreamingAssets 路徑 (OSX and iOS 需要 + file://)
+        /// <para> ※備註：macOS Editor 無論當前的 Build Target 為何 (ex: Android, WebGL)，皆需 + file:// </para>
         /// </summary>
         /// <returns></returns>
         public static string GetRequestStreamingAssetsPath()
         {
-#if UNITY_STANDALONE_OSX || UNITY_IOS
+#if UNITY_STANDALONE_OSX || UNITY_IOS || UNITY_EDITOR_OSX
             return $"file://{Application.streamingAssetsPath}";
 #else
             return Application.streamingAssetsPath;

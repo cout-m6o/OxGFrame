@@ -1,8 +1,17 @@
-﻿using HybridCLR.Editor;
+﻿#if HYBRIDCLR_9_OR_NEWER
+// [HybridCLR v9] 編輯器命名空間調整 (移除 Editor 層級)
+using HybridCLR;
+using HybridCLR.Commands;
+#else
+using HybridCLR.Editor;
 using HybridCLR.Editor.Commands;
+#endif
 using System;
 using System.Collections.Generic;
 using System.IO;
+#if HYBRIDCLR_9_OR_NEWER
+using System.Text.RegularExpressions;
+#endif
 using UnityEditor;
 using UnityEngine;
 
@@ -47,11 +56,20 @@ namespace OxGFrame.Hotfixer.Editor
             string aotAssembliesSrcDir = SettingsUtil.GetAssembliesPostIl2CppStripDir(target);
             string aotAssembliesDstDir = string.IsNullOrEmpty(dstDir) ? Path.Combine(Application.dataPath, HOTFIX_COLLECTOR_DIR, AOT_DLLS_DIR) : dstDir;
 
-            if (Directory.Exists(aotAssembliesDstDir)) Directory.Delete(aotAssembliesDstDir, true);
-            if (!Directory.Exists(aotAssembliesDstDir)) Directory.CreateDirectory(aotAssembliesDstDir);
+            // 取得需補充元數據的 AOT 組件名稱 (不含 .dll 擴展名)
+            List<string> aotAssemblyNames = _GetAOTAssemblyNames();
+
+            // 僅清除不屬於本次輸出的文件 (來源不存在的 dll 不會被複製，因此也不保留其舊文件)
+            var aotDllBytesFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var dll in aotAssemblyNames)
+            {
+                if (File.Exists($"{aotAssembliesSrcDir}/{dll}.dll"))
+                    aotDllBytesFileNames.Add($"{dll}.dll.bytes");
+            }
+            _CleanDestinationDirectory(aotAssembliesDstDir, aotDllBytesFileNames);
 
             ulong totalBytesSize = 0;
-            foreach (var dll in SettingsUtil.AOTAssemblyNames)
+            foreach (var dll in aotAssemblyNames)
             {
                 string dllPath = $"{aotAssembliesSrcDir}/{dll}.dll";
                 if (!File.Exists(dllPath))
@@ -82,8 +100,11 @@ namespace OxGFrame.Hotfixer.Editor
             string hotfixDllSrcDir = SettingsUtil.GetHotUpdateDllsOutputDirByTarget(target);
             string hotfixAssembliesDstDir = string.IsNullOrEmpty(dstDir) ? Path.Combine(Application.dataPath, HOTFIX_COLLECTOR_DIR, HOTFIX_DLLS_DIR) : dstDir;
 
-            if (Directory.Exists(hotfixAssembliesDstDir)) Directory.Delete(hotfixAssembliesDstDir, true);
-            if (!Directory.Exists(hotfixAssembliesDstDir)) Directory.CreateDirectory(hotfixAssembliesDstDir);
+            // 僅清除不屬於本次輸出的文件
+            var hotfixDllBytesFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var dll in SettingsUtil.HotUpdateAssemblyFilesExcludePreserved)
+                hotfixDllBytesFileNames.Add($"{dll}.bytes");
+            _CleanDestinationDirectory(hotfixAssembliesDstDir, hotfixDllBytesFileNames);
 
             ulong totalBytesSize = 0;
             foreach (var dll in SettingsUtil.HotUpdateAssemblyFilesExcludePreserved)
@@ -119,6 +140,80 @@ namespace OxGFrame.Hotfixer.Editor
         #endregion
 
         #region Internal Methods
+        /// <summary>
+        /// 取得需補充元數據的 AOT 組件名稱 (不含 .dll 擴展名)
+        /// <para> [HybridCLR v8 以前] 取自 HybridCLRSettings 的 patchAOTAssemblies 設置 </para>
+        /// <para> [HybridCLR v9] 該設置已被移除，改為取自 HybridCLR 生成的 AOTGenericReferences 腳本中的 PatchedAOTAssemblyList </para>
+        /// </summary>
+        /// <returns></returns>
+        private static List<string> _GetAOTAssemblyNames()
+        {
+#if HYBRIDCLR_9_OR_NEWER
+            var aotAssemblyNames = new List<string>();
+
+            // ※備註：直接解析生成的腳本內容，於生成後無需等待重新編譯即可取得最新的清單 (ex: 接續於 HybridCLR/Generate/All 之後執行)
+            string filePath = $"{Application.dataPath}/{SettingsUtil.HybridCLRSettings.outputAOTGenericReferenceFile}";
+            if (!File.Exists(filePath))
+            {
+                Debug.LogWarning($"Cannot find the generated AOTGenericReferences file: {filePath}. No AOT dlls will be copied. Please execute [HybridCLR/Generate/All] first.");
+                return aotAssemblyNames;
+            }
+
+            string content = File.ReadAllText(filePath);
+            Match listMatch = Regex.Match(content, @"PatchedAOTAssemblyList\s*=\s*new\s+List\s*<\s*string\s*>\s*\{(?<names>[^}]*)\}");
+            if (!listMatch.Success)
+            {
+                Debug.LogWarning($"Cannot find the PatchedAOTAssemblyList in the generated AOTGenericReferences file: {filePath}. No AOT dlls will be copied. Please execute [HybridCLR/Generate/All] again.");
+                return aotAssemblyNames;
+            }
+
+            string fileExtension = ".dll";
+            foreach (Match nameMatch in Regex.Matches(listMatch.Groups["names"].Value, "\"(?<name>[^\"]+)\""))
+            {
+                // 移除 .dll 擴展名 (與 patchAOTAssemblies 的格式一致)
+                string name = nameMatch.Groups["name"].Value;
+                if (name.EndsWith(fileExtension, StringComparison.OrdinalIgnoreCase))
+                    name = name.Substring(0, name.Length - fileExtension.Length);
+                if (!aotAssemblyNames.Contains(name))
+                    aotAssemblyNames.Add(name);
+            }
+
+            return aotAssemblyNames;
+#else
+            return SettingsUtil.AOTAssemblyNames;
+#endif
+        }
+
+        /// <summary>
+        /// 清理輸出資料夾 (僅刪除不屬於本次輸出的文件與子資料夾)
+        /// <para> 保留仍會被覆蓋的文件與其 .meta，避免每次複製皆刪除整個資料夾，導致所有 dll 的 .meta 被重新產生 (GUID 改變會使內容未變更的 dll 也被視為不同的資源) </para>
+        /// </summary>
+        /// <param name="dstDir"></param>
+        /// <param name="keepFileNames"></param>
+        private static void _CleanDestinationDirectory(string dstDir, HashSet<string> keepFileNames)
+        {
+            if (!Directory.Exists(dstDir))
+            {
+                Directory.CreateDirectory(dstDir);
+                return;
+            }
+
+            // 刪除所有子資料夾 (輸出資料夾僅會存放 dll 文件)
+            foreach (var subDir in Directory.GetDirectories(dstDir))
+                Directory.Delete(subDir, true);
+
+            // 刪除不屬於本次輸出的文件 (.meta 則依照其對應的文件決定是否保留)
+            string metaExtension = ".meta";
+            foreach (var filePath in Directory.GetFiles(dstDir))
+            {
+                string fileName = Path.GetFileName(filePath);
+                string ownerFileName = fileName.EndsWith(metaExtension, StringComparison.OrdinalIgnoreCase) ?
+                    fileName.Substring(0, fileName.Length - metaExtension.Length) : fileName;
+                if (!keepFileNames.Contains(ownerFileName))
+                    File.Delete(filePath);
+            }
+        }
+
         /// <summary>
         /// Bytes ToString (KB, MB, GB)
         /// </summary>
