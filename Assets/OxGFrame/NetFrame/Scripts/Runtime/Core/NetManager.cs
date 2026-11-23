@@ -13,6 +13,16 @@ namespace OxGFrame.NetFrame
         private Dictionary<int, NetNode> _netNodes = null;
 
         /// <summary>
+        /// Reusable snapshot buffer for iterating network nodes (avoids allocating a new array on every update tick).
+        /// </summary>
+        private readonly List<NetNode> _updateNodesBuffer = new List<NetNode>();
+
+        /// <summary>
+        /// Indicates whether the snapshot buffer is currently being iterated.
+        /// </summary>
+        private bool _isUpdateNodesBufferInUse = false;
+
+        /// <summary>
         /// The real-time updater driver that processes network logic.
         /// </summary>
         internal RTUpdater rtUpdater = null;
@@ -84,15 +94,47 @@ namespace OxGFrame.NetFrame
         {
             if (this._netNodes.Count > 0)
             {
-                // Create a snapshot to prevent "Collection Modified" exceptions during iteration
-                var nodes = this._netNodes.Values.ToArray();
-                foreach (var node in nodes)
+                // 緩衝區使用中時 (ex: 巢狀調用)，退回每次建立陣列快照的方式
+                if (this._isUpdateNodesBufferInUse)
                 {
-                    // If the collection size changed significantly, stop current iteration to stay synced
-                    if (this._netNodes.Count != nodes.Length) break;
-                    else if (node == null) continue;
+                    // Create a snapshot to prevent "Collection Modified" exceptions during iteration
+                    var nodes = this._netNodes.Values.ToArray();
+                    foreach (var node in nodes)
+                    {
+                        // If the collection size changed significantly, stop current iteration to stay synced
+                        if (this._netNodes.Count != nodes.Length) break;
+                        else if (node == null) continue;
 
-                    node.OnUpdate();
+                        node.OnUpdate();
+                    }
+                    return;
+                }
+
+                // Create a snapshot to prevent "Collection Modified" exceptions during iteration
+                // (使用可重複利用的緩衝區建立快照，避免每次刷新皆配置新的陣列)
+                this._isUpdateNodesBufferInUse = true;
+                try
+                {
+                    this._updateNodesBuffer.Clear();
+                    foreach (var pair in this._netNodes)
+                        this._updateNodesBuffer.Add(pair.Value);
+
+                    int count = this._updateNodesBuffer.Count;
+                    for (int i = 0; i < count; i++)
+                    {
+                        // If the collection size changed significantly, stop current iteration to stay synced
+                        if (this._netNodes.Count != count) break;
+
+                        var node = this._updateNodesBuffer[i];
+                        if (node == null) continue;
+
+                        node.OnUpdate();
+                    }
+                }
+                finally
+                {
+                    this._updateNodesBuffer.Clear();
+                    this._isUpdateNodesBufferInUse = false;
                 }
             }
         }
