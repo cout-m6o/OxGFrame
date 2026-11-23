@@ -127,6 +127,31 @@ namespace OxGFrame.CoreFrame.Editor
             };
         }
 
+        /// <summary>
+        /// 查找專案內的配置文件 (僅查找而不自動建立，供 Unity CLI 與自動化流程讀取綁定規則)
+        /// </summary>
+        /// <param name="assetPath">配置文件的資源路徑 (未找到時為 null)</param>
+        /// <param name="error">失敗原因 (專案內存在多個配置文件時)</param>
+        /// <returns>未找到或存在多個配置文件時回傳 null</returns>
+        public static CodeBindingSettings FindSettings(out string assetPath, out string error)
+        {
+            assetPath = null;
+            error = null;
+
+            string[] guids = AssetDatabase.FindAssets($"t:{nameof(CodeBindingSettings)}");
+            if (guids.Length == 0)
+                return null;
+
+            if (guids.Length != 1)
+            {
+                error = $"Found multiple {nameof(CodeBindingSettings)} files: {string.Join(", ", guids.Select(guid => AssetDatabase.GUIDToAssetPath(guid)))}";
+                return null;
+            }
+
+            assetPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+            return AssetDatabase.LoadAssetAtPath<CodeBindingSettings>(assetPath);
+        }
+
         public string GetIndicateModifier()
         {
             switch (this.indicateModifier)

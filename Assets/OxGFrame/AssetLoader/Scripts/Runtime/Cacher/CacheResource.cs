@@ -7,6 +7,16 @@ namespace OxGFrame.AssetLoader.Cacher
 {
     internal class CacheResource : AssetCache<ResourcePack>
     {
+        /// <summary>
+        /// 批次卸載深度 (大於 0 時，暫緩調用 Resources.UnloadUnusedAssets)
+        /// </summary>
+        private int _batchUnloadDepth = 0;
+
+        /// <summary>
+        /// 批次卸載期間，是否有資源等待調用底層接口釋放
+        /// </summary>
+        private bool _pendingUnloadUnusedAssets = false;
+
         private static CacheResource _instance = null;
         public static CacheResource GetInstance()
         {
@@ -15,6 +25,32 @@ namespace OxGFrame.AssetLoader.Cacher
             return _instance;
         }
 
+        #region Batch Unload
+        /// <summary>
+        /// 開始批次卸載
+        /// <para> Resources.UnloadUnusedAssets 為全域掃描，逐一調用的成本極高，因此批次期間合併為結束時的單次調用 </para>
+        /// </summary>
+        internal void BeginBatchUnload()
+        {
+            this._batchUnloadDepth++;
+        }
+
+        /// <summary>
+        /// 結束批次卸載 (批次期間若有資源被實際卸載，於此統一調用一次底層接口釋放)
+        /// </summary>
+        internal void EndBatchUnload()
+        {
+            if (this._batchUnloadDepth > 0)
+                this._batchUnloadDepth--;
+
+            if (this._batchUnloadDepth == 0 && this._pendingUnloadUnusedAssets)
+            {
+                this._pendingUnloadUnusedAssets = false;
+                Resources.UnloadUnusedAssets();
+            }
+        }
+        #endregion
+
         public override bool HasInCache(string assetName)
         {
             return this._cacher.ContainsKey(assetName);
@@ -22,13 +58,9 @@ namespace OxGFrame.AssetLoader.Cacher
 
         public override ResourcePack GetFromCache(string assetName)
         {
-            if (this.HasInCache(assetName))
-            {
-                if (this._cacher.TryGetValue(assetName, out ResourcePack pack))
-                    return pack;
-            }
-
-            return null;
+            // 僅需查詢一次
+            this._cacher.TryGetValue(assetName, out ResourcePack pack);
+            return pack;
         }
 
         #region Asset
@@ -63,8 +95,11 @@ namespace OxGFrame.AssetLoader.Cacher
 
                     try
                     {
-                        var source = (UniTaskCompletionSource)existingTask;
-                        await source.Task;
+                        // 進行中的任務可能是預載任務 (非泛型) 或型別化的載入任務 (泛型)，後者無法轉型，改為等待其結束
+                        if (existingTask is UniTaskCompletionSource source)
+                            await source.Task;
+                        else
+                            await this.WaitForLoadingTask(assetName);
 
                         // 等待完成後更新進度
                         this.currentCount++;
@@ -170,7 +205,12 @@ namespace OxGFrame.AssetLoader.Cacher
 
                 this.GetRetryCounter(assetName).DelRetryCount();
                 this.TryRemoveLoadingTask(assetName);
-                await this.PreloadAssetAsync<T>(new string[] { assetName }, progression, maxRetryCount);
+                // 巢狀重試會重置進度計數，因此不傳入 progression 並於結束後還原，交由最外層統一更新進度 (避免批次預載的進度被覆寫)
+                float currentCount = this.currentCount;
+                float totalCount = this.totalCount;
+                await this.PreloadAssetAsync<T>(new string[] { assetName }, null, maxRetryCount);
+                this.currentCount = currentCount;
+                this.totalCount = totalCount;
             }
         }
 
@@ -242,7 +282,13 @@ namespace OxGFrame.AssetLoader.Cacher
                     }
 
                     this.GetRetryCounter(assetName).DelRetryCount();
-                    this.PreloadAsset<T>(new string[] { assetName }, progression, maxRetryCount);
+                    // 巢狀重試會重置進度計數，因此不傳入 progression 並於結束後還原，再由此處統一更新進度 (避免批次預載的進度被覆寫)
+                    float currentCount = this.currentCount;
+                    float totalCount = this.totalCount;
+                    this.PreloadAsset<T>(new string[] { assetName }, null, maxRetryCount);
+                    this.currentCount = currentCount + 1;
+                    this.totalCount = totalCount;
+                    progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
                     continue;
                 }
             }
@@ -264,21 +310,26 @@ namespace OxGFrame.AssetLoader.Cacher
             ResourcePack pack = null;
 
             // 檢查是否有進行中的載入任務
-            if (this.TryGetLoadingTask(assetName, out var existingTask))
+            while (this.TryGetLoadingTask(assetName, out var existingTask))
             {
                 Logging.Print<Logger>($"Asset: {assetName} is loading, waiting for existing task...");
-                var source = (UniTaskCompletionSource<T>)existingTask;
-                var asset = await source.Task;
-                if (asset != null)
+                if (existingTask is UniTaskCompletionSource<T> source)
                 {
-                    pack = this.GetFromCache(assetName);
-                    if (pack != null)
+                    var asset = await source.Task;
+                    if (asset != null)
                     {
-                        pack.AddRef();
-                        Logging.Print<Logger>($"【Load Shared】 => Current << {nameof(CacheResource)} >> Cache Count: {this.count}, asset: {assetName}, ref: {pack.refCount}");
+                        pack = this.GetFromCache(assetName);
+                        if (pack != null)
+                        {
+                            pack.AddRef();
+                            Logging.Print<Logger>($"【Load Shared】 => Current << {nameof(CacheResource)} >> Cache Count: {this.count}, asset: {assetName}, ref: {pack.refCount}");
+                        }
                     }
+                    return asset;
                 }
-                return asset;
+
+                // 進行中的任務型別不同 (ex: 預載任務或以不同型別載入)，無法共用其結果，等待其結束後改由緩存流程取得
+                await this.WaitForLoadingTask(assetName);
             }
 
             // 先從緩存拿
@@ -494,7 +545,7 @@ namespace OxGFrame.AssetLoader.Cacher
             {
                 // 引用計數--
                 pack.DelRef();
-                Logging.Print<Logger>($"【Unload】 => Current << {nameof(CacheResource)} >> Cache Count: {this.count}, asset: {assetName}, ref: {this._cacher.TryGetValue(assetName, out var v)} {v?.refCount}");
+                Logging.Print<Logger>($"【Unload】 => Current << {nameof(CacheResource)} >> Cache Count: {this.count}, asset: {assetName}, ref: {pack.refCount}");
 
                 // 判斷是否需要實際卸載
                 bool shouldUnload = forceUnload || pack.IsReleasable();
@@ -503,7 +554,12 @@ namespace OxGFrame.AssetLoader.Cacher
                 {
                     this._cacher[assetName] = null;
                     this._cacher.Remove(assetName);
-                    Resources.UnloadUnusedAssets();
+
+                    // 批次卸載期間先行標記，待批次結束時統一調用一次
+                    if (this._batchUnloadDepth > 0)
+                        this._pendingUnloadUnusedAssets = true;
+                    else
+                        Resources.UnloadUnusedAssets();
 
                     Logging.Print<Logger>($"【Unload Completes】 => Current << {nameof(CacheResource)} >> Cache Count: {this.count}, asset: {assetName}");
                 }
@@ -520,13 +576,23 @@ namespace OxGFrame.AssetLoader.Cacher
             if (this.count == 0)
                 return;
 
-            // 強制釋放緩存與資源
-            foreach (var assetName in this._cacher.Keys.ToArray())
+            // 強制釋放緩存與資源 (批次處理，避免每個資源都觸發一次 Resources.UnloadUnusedAssets)
+            this.BeginBatchUnload();
+            try
             {
-                if (this.HasInCache(assetName))
+                foreach (var assetName in this._cacher.Keys.ToArray())
                 {
-                    this.UnloadAsset(assetName, true);
+                    if (this.HasInCache(assetName))
+                    {
+                        this.UnloadAsset(assetName, true);
+                    }
                 }
+            }
+            finally
+            {
+                // 結尾會統一調用一次底層接口釋放，因此無需再由批次結束時觸發
+                this._pendingUnloadUnusedAssets = false;
+                this.EndBatchUnload();
             }
 
             this._cacher.Clear();

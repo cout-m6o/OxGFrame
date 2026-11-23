@@ -31,7 +31,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <param name="timeoutSeconds"></param>
         public static void Acax(string url, string method, string[,] headers, object[,] body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             RequestAPI(url, method, headers, body, success, error, timeoutSeconds).Forget();
         }
 
@@ -48,7 +48,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <param name="timeoutSeconds"></param>
         public static void Acax(string url, string method, string[,] headers, object body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             RequestAPI(url, method, headers, body, success, error, timeoutSeconds).Forget();
         }
 
@@ -66,7 +66,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <returns></returns>
         public async static UniTask<string> AcaxAsync(string url, string method, string[,] headers, object[,] body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             return await RequestAPI(url, method, headers, body, success, error, timeoutSeconds);
         }
 
@@ -84,7 +84,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <returns></returns>
         public async static UniTask<string> AcaxAsync(string url, string method, string[,] headers, object body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             return await RequestAPI(url, method, headers, body, success, error, timeoutSeconds);
         }
 
@@ -143,9 +143,10 @@ namespace OxGFrame.CenterFrame.APICenter
                     request.downloadHandler = new DownloadHandlerBuffer();
 
                     timeoutSeconds ??= _MAX_REQUEST_TIME_SECONDS;
-                    // 使用 using 釋放 CancellationTokenSource，避免每次請求洩漏計時器
+                    // 使用 using 釋放 CancellationTokenSource 與逾時計時器，避免每次請求洩漏計時器
+                    // 注意：CancelAfterSlim 回傳的計時器必須一併釋放 (宣告於 cts 之後，會先於 cts 釋放)，否則請求提前完成後，計時器到期時仍會對已釋放的 cts 調用 Cancel 而拋出 ObjectDisposedException
                     using var cts = new CancellationTokenSource();
-                    cts.CancelAfterSlim(TimeSpan.FromSeconds((int)timeoutSeconds));
+                    using var timeoutTimer = cts.CancelAfterSlim(TimeSpan.FromSeconds((int)timeoutSeconds));
 
                     // Start send request
                     await request.SendWebRequest().WithCancellation(cts.Token);

@@ -166,6 +166,8 @@ namespace OxGFrame.AssetLoader.PatchFsm
                     {
                         string hostServer;
                         string fallbackHostServer;
+                        // 端點解析可能失敗 (ex: 斷網時無法取得 Host 的 AppConfig)，需視為初始失敗並發送失敗事件，避免流程無聲卡死
+                        bool endpointsResolved = true;
 
                         if (packageInfo is DlcPackageInfoWithBuild)
                         {
@@ -175,8 +177,16 @@ namespace OxGFrame.AssetLoader.PatchFsm
 
                             if (BundleConfig.playModeParameters.autoConfigureServerEndpoints)
                             {
-                                hostServer = string.IsNullOrEmpty(hostServer) ? await BundleConfig.GetDlcHostServerUrl(packageDetail.packageName, packageDetail.dlcVersion, packageDetail.withoutPlatform) : hostServer;
-                                fallbackHostServer = string.IsNullOrEmpty(fallbackHostServer) ? await BundleConfig.GetDlcFallbackHostServerUrl(packageDetail.packageName, packageDetail.dlcVersion, packageDetail.withoutPlatform) : fallbackHostServer;
+                                try
+                                {
+                                    hostServer = string.IsNullOrEmpty(hostServer) ? await BundleConfig.GetDlcHostServerUrl(packageDetail.packageName, packageDetail.dlcVersion, packageDetail.withoutPlatform) : hostServer;
+                                    fallbackHostServer = string.IsNullOrEmpty(fallbackHostServer) ? await BundleConfig.GetDlcFallbackHostServerUrl(packageDetail.packageName, packageDetail.dlcVersion, packageDetail.withoutPlatform) : fallbackHostServer;
+                                }
+                                catch (Exception ex)
+                                {
+                                    Logging.PrintException<Logger>(ex);
+                                    endpointsResolved = false;
+                                }
                             }
                         }
                         else if (packageInfo is AppPackageInfoWithBuild)
@@ -187,11 +197,25 @@ namespace OxGFrame.AssetLoader.PatchFsm
 
                             if (BundleConfig.playModeParameters.autoConfigureServerEndpoints)
                             {
-                                hostServer = await BundleConfig.GetHostServerUrl(packageDetail.packageName);
-                                fallbackHostServer = await BundleConfig.GetFallbackHostServerUrl(packageDetail.packageName);
+                                try
+                                {
+                                    hostServer = await BundleConfig.GetHostServerUrl(packageDetail.packageName);
+                                    fallbackHostServer = await BundleConfig.GetFallbackHostServerUrl(packageDetail.packageName);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Logging.PrintException<Logger>(ex);
+                                    endpointsResolved = false;
+                                }
                             }
                         }
                         else throw new Exception("Package info type error.");
+
+                        if (!endpointsResolved)
+                        {
+                            isInitialized = false;
+                            break;
+                        }
 
                         // Try-catch to avoid same package to init, will try-catch until is initialized
                         try

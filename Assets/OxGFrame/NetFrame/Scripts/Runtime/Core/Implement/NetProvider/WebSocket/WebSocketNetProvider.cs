@@ -122,9 +122,30 @@ namespace OxGFrame.NetFrame
         {
             if (this._client != null)
             {
+                // 手動關閉後，不需再接收該連線的開啟事件 (避免關閉期間才收到的開啟事件，使節點狀態誤判為已連線)
+                this._client.OnOpen -= this._OnOpenHandler;
+
+                // 連線尚未建立時，CloseAsync 不會有任何作用 (non-WebGL 的實作僅處理已開啟的連線)
+                // 需改為待連線建立後立即關閉，避免殘留無人管理且持續保持連線的 WebSocket
+                if (this._client.ReadyState == WebSocketState.Connecting)
+                {
+                    this._client.OnMessage -= this._OnMessageHandler;
+                    this._client.OnOpen += _OnOpenToCloseHandler;
+                }
+
                 this._client.CloseAsync();
                 this._client = null;
             }
+        }
+
+        /// <summary>
+        /// 連線建立後立即關閉 (用於連線尚未建立就被手動關閉的情況)
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private static void _OnOpenToCloseHandler(object sender, OpenEventArgs e)
+        {
+            (sender as WebSocket)?.CloseAsync();
         }
     }
 }

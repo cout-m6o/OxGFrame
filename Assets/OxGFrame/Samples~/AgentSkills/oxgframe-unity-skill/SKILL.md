@@ -1,6 +1,6 @@
 ---
 name: oxgframe-unity-skill
-description: Use when developing, reviewing, or migrating Unity projects that use OxGFrame, including AssetLoaders asset/scene/raw-file loading, AssetPatcher patch and download flow, PatchLauncher play modes, CoreFrames UI/SR/US/CP loading and lifecycle, UIBase/SRBase/CPBase prefab CodeBinding (_Node@ / ~Node@), MediaFrames audio/video playback, GSIFrame game stage flow, NetFrame websocket/tcp/kcp clients, CenterFrame API/Event centers, Hotfixer HybridCLR hotfix bootstrap, and WebGL/IL2CPP concerns. Do not use for YooAsset build-pipeline internals unless explicitly requested.
+description: Use when developing, reviewing, or migrating Unity projects that use OxGFrame, including AssetLoaders asset/scene/raw-file loading, AssetPatcher patch and download flow, PatchLauncher play modes, CoreFrames UI/SR/US/CP loading and lifecycle, UIBase/SRBase/CPBase prefab CodeBinding (_Node@ / ~Node@), the framework's own editor tools (bind-code generator, script/prefab templates, config exporters) that must be triggered — through the Unity CLI commands `unity command oxgframe.*`, the editor methods or the menu items — instead of hand-writing their output, MediaFrames audio/video playback, GSIFrame game stage flow, NetFrame websocket/tcp/kcp clients, CenterFrame API/Event centers, Hotfixer HybridCLR hotfix bootstrap, and WebGL/IL2CPP concerns. Do not use for YooAsset build-pipeline internals unless explicitly requested.
 ---
 
 # OxGFrame Unity Skill
@@ -14,29 +14,46 @@ Verified scope:
 - `AssetLoaders` address-based asset, raw-file, and scene loading; group (`groupId`) cachers.
 - `AssetPatcher` patch flow, play modes, packages (App/DLC), downloaders, `PackageOperation`.
 - `CoreFrames.UIFrame` / `SRFrame` / `USFrame` / `CPFrame` and the `UIBase` / `SRBase` / `CPBase` lifecycle.
-- Prefab CodeBinding workflow: `_Node@` / `~Node@` naming, `collector.GetNode(Component)`, auto-generate editor.
+- Prefab CodeBinding workflow: `_Node@` / `~Node@` naming grammar, `CodeBindingSettings`, the bind-code generator and the stop-end tool.
+- Editor tooling: every Unity CLI command (`unity command oxgframe.*`), menu item and public editor method that generates scripts, prefabs, binding code and config files.
 - `MediaFrames.AudioFrame` / `VideoFrame`.
 - `GSIFrame` stage manager, `NetFrame` network nodes, `CenterFrame` API/Event centers, `Hotfixers` HybridCLR flow.
 
-The bundled references are grounded in the framework source and the 16 official Samples — treat them as the canonical usage patterns.
+The bundled references are grounded in the framework source (v3.7.1) and the 16 official Samples — treat them as the canonical usage patterns. Supported dependency ranges: Unity 2021.3 – 6.x, YooAsset 2.x and 3.x, HybridCLR 8.x and 9.x (9.x does not support Unity 2021).
 
 ## First response rules
 
 1. Reply in the user's language; keep code and identifiers in English.
 2. Start with the conclusion, then implementation details.
-3. Coding style is a per-team decision — ASK before applying. Before writing the first code for a project, ask the developer whether project code should follow the OxGFrame coding style (`references/coding-style.md`) or the team's own conventions, then apply that choice consistently (persist it to project memory/context when available). The OxGFrame style is only mandatory for code inside the OxGFrame package itself (framework contributions and extensions); application/business-logic code belongs to the team's own conventions, and the project's existing style wins by default.
+3. Coding style is a per-team decision — ASK before applying. Before writing the first code for a project, ask the developer whether project code should follow the OxGFrame coding style (`references/coding-style.md`) or the team's own conventions, then apply that choice consistently (persist it to project memory/context when available). The OxGFrame style is only mandatory for code inside the OxGFrame package itself (framework contributions and extensions); application/business-logic code belongs to the team's own conventions, and the project's existing style wins by default. Tool-generated code is outside this choice: it follows the project's `CodeBindingSettings` and is never restyled by hand.
 4. Before changing code, inspect the target project's real definitions (address constants, package names, existing UI/SR/CP classes). Do not invent package names or asset addresses.
 5. If an API is not listed in these references or the target project uses a different OxGFrame version, verify against the installed package source first and say so.
 6. For WebGL/IL2CPP targets, call out async, stripping/link.xml, autoplay/media, and download constraints when relevant.
+
+## Tool-first rule (mandatory)
+
+OxGFrame already ships an editor tool for everything that follows a framework rule. Work the way a developer does: prepare the inputs, then trigger the framework's tool — never hand-write what a tool produces and never derive your own rule that merely looks compatible.
+
+- **Binding code** (`#region Binding Components`, `OnAutoBind`) comes only from **Auto Generate Bind Codes**. Name the GameObjects with the framework grammar and the project's `CodeBindingSettings`, run the generator, then read what it wrote. Never type, edit or "fix up" the region, and never invent another binding scheme.
+- **Stop-end markers** come only from **Auto Generate Stop End Symbol**.
+- **Scripts and prefabs** (UI / SR / CP, game stages, API / Event centers, audio / video prefabs) come from the framework templates and converters.
+- **Config files** (`AppInfo.json`, `PatchInfo.json`, `CdnConfig.dat`, `HotfixManifest.dat`, `MediaConfig.txt`) come from the framework exporters.
+- **Deprecated-API renames** after an upgrade come from the API Updater.
+- **The project's binding rules** (tails, access rules, attributes, casing, method type) are read from the project (`get_binding_settings` / the `CodeBindingSettings` asset), never assumed from the defaults.
+
+How to trigger, in order of preference: (1) the **Unity CLI** — `unity command oxgframe.<module> <name> ...` — when the project has Unity's Pipeline package (`com.unity.pipeline` 1.x, Unity 6.0+); (2) the path-based static editor methods through any other editor bridge or batch mode; (3) the developer pressing the menu item. Never install the Unity CLI or the Pipeline package without the developer's consent. With the Unity CLI, every command that writes a script is followed by a compile and a script reload: wait for both (`script recompile`, poll `script recompile_status`, then `editor status` — the exact rule is in `references/editor-tools.md`) before sending the next command.
+
+`references/editor-tools.md` lists every tool with its Unity CLI command, menu path, public method, preconditions and how to trigger it. If you cannot trigger a tool in the current environment, say so and hand that single step to the developer — do not replace it with your own output.
 
 ## Reference loading
 
 Load only what the task needs:
 
+- `references/editor-tools.md` — the framework's editor tools and how an agent triggers them (Unity CLI commands, path-based methods, menu items); read it before creating any script, prefab, binding code or config file.
 - `references/source-map.md` — where every module lives in the package; verification commands.
 - `references/samples-guide.md` — what each of the 16 official Samples demonstrates; scene setup requirements.
 - `references/assetloader-usage.md` — AssetLoaders, AssetPatcher, patch events, PackageOperation (DLC), play modes, decryption.
-- `references/coreframe-usage.md` — CoreFrames UI/SR/US/CP APIs, lifecycle tables, CodeBinding, UI stack/reverse/mask/freeze.
+- `references/coreframe-usage.md` — CoreFrames UI/SR/US/CP APIs, lifecycle tables, the CodeBinding grammar and workflow, UI stack/reverse/mask/freeze.
 - `references/mediaframe-usage.md` — MediaFrames Audio/Video APIs, mixer control, media prefab setup.
 - `references/gsi-net-center-usage.md` — GSIFrame stages, NetFrame clients, CenterFrame API/Event centers.
 - `references/hotfix-flow.md` — Hotfixers + HybridCLR flow, main/hotfix assembly split.
@@ -59,7 +76,7 @@ OxGFrame depends on several OxGKit utility modules — you will meet these APIs 
 - `OxGKit.SaverSystem` — `Saver` (PlayerPrefs-backed) persists patch preferences; `Saver.ParsingDataMap(text)` parses `key value` config text (used by media URL configs).
 - `OxGKit.TimeSystem` — `RTUpdater` drives NetFrame's update loop; `RealTimer`/`DeltaTimer` for timing.
 - `OxGKit.Utilities` — `Requester` (audio/texture/text web requests with LRU/ARC caching, used by MediaFrame), `UnityMainThread`, `DontDestroy`, `EasyAnim`.
-- `OxGKit.ButtonSystem` — `ButtonPlus` (CodeBinding tail `BtnPlus`) used by UI samples.
+- `OxGKit.ButtonSystem` — optional (not a framework dependency): `ButtonPlus` is the target of the default CodeBinding tail `BtnPlus`, so use that tail only when the package is installed.
 
 This skill only covers what OxGFrame itself uses. Dedicated skills for the individual OxGKit systems (input, localization, cursor, pools, actions, tweens, infinite scroll, singletons, ...) are provided separately by the OxGKit project — use those for deep OxGKit work.
 
@@ -67,7 +84,8 @@ This skill only covers what OxGFrame itself uses. Dedicated skills for the indiv
 
 - Do not call YooAsset directly for game feature code when OxGFrame provides a wrapper (`AssetLoaders`, `CoreFrames`, `MediaFrames`).
 - Implement with the highest-level API available: `CoreFrames.UIFrame.Show` for UI, `SRFrame.Show` for scene resources, `USFrame.Load*SceneAsync` for Unity scenes, `CPFrame.LoadWithClone(Async)` for clone prefabs, `MediaFrames` for audio/video; use `AssetLoaders` only when no frame helper fits.
-- Bind component references in `OnAutoBind()` (generated); register one-time events in `OnBind()`; consume `Show(..., data)` payloads in `OnShow(object)` — never in `OnPreShow()`; refresh visual/data state in `OnShow` / `OnReceiveAndRefresh`; release listeners in `OnRelease()`.
+- Never hand-write or edit generated artifacts (binding region, stop-end markers, template skeletons, exported config files) — trigger the framework tool (Tool-first rule).
+- Component references live in the generated `OnAutoBind()`; register one-time events in `OnBind()`; consume `Show(..., data)` payloads in `OnShow(object)` — never in `OnPreShow()`; refresh visual/data state in `OnShow` / `OnReceiveAndRefresh`; release listeners in `OnRelease()`.
 - `OnShowAnimation` / `OnCloseAnimation` overrides MUST invoke `animationEnd()` or the UI never unfreezes.
 - Use `CloseSelf()` when a UI closes itself from its own callback; use `CoreFrames.UIFrame.Close(assetName)` for external close flows. `Close(assetName, disableOnPreClose, forceDestroy)` — `disableOnPreClose` skips `OnPreClose()`, `forceDestroy` destroys and unloads.
 - `Hide` keeps the instance and can be `Reveal`ed; `Close` runs the close flow. Do not `Reveal` a closed UI.
@@ -82,7 +100,7 @@ This skill only covers what OxGFrame itself uses. Dedicated skills for the indiv
 For implementation guidance:
 
 1. Conclusion.
-2. Exact code or patch-ready snippets.
+2. Exact code or patch-ready snippets — for hand-written logic only. For anything a framework tool generates, name the tool, its inputs (target path, GameObject names, selection) and the expected result instead of pasting generated output.
 3. Where the files/classes/prefabs belong.
 4. Lifecycle/release notes.
 5. Verification steps (compile, play-mode path to exercise).

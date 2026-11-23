@@ -16,6 +16,12 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.code-philosophy.hybridclr",
+            "expression": "9.0.0",
+            "define": "HYBRIDCLR_9_OR_NEWER"
+        }
+    ],
     "noEngineReferences": false
 }

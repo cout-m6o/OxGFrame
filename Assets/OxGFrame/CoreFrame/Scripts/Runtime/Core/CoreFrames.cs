@@ -1453,6 +1453,16 @@ namespace OxGFrame.CoreFrame
             }
 
             /// <summary>
+            /// Get all loaded scenes
+            /// </summary>
+            /// <returns></returns>
+            public static Scene[] GetAllScenes()
+            {
+                // 無參數調用時，params string[] 與 params int[] 兩個多載會產生歧義 (CS0121)，因此提供明確的無參數版本
+                return USManager.GetInstance().GetAllScenes(Array.Empty<string>());
+            }
+
+            /// <summary>
             /// Get all loaded scenes, or only those matching the given scene names
             /// </summary>
             /// <param name="sceneNames"></param>
@@ -1639,7 +1649,7 @@ namespace OxGFrame.CoreFrame
             /// <param name="priority"></param>
             /// <param name="progression"></param>
             /// <returns></returns>
-            public static async UniTask LoadAdditiveSceneAsync(string sceneName, bool activateOnLoad = true, uint priority = 100, Progression progression = null)
+            public static async UniTask LoadAdditiveSceneAsync(string sceneName, bool activateOnLoad, uint priority = 100, Progression progression = null)
             {
                 var packageName = AssetPatcher.GetDefaultPackageName();
                 await LoadAdditiveSceneAsync(packageName, sceneName, activateOnLoad, priority, progression);
@@ -1674,7 +1684,7 @@ namespace OxGFrame.CoreFrame
             /// <para>From Build is &lt;AsyncOperation&gt;</para>
             /// <para>From Bundle is &lt;BundlePack&gt;</para>
             /// </returns>
-            public static async UniTask<T> LoadAdditiveSceneAsync<T>(string sceneName, bool activateOnLoad = true, uint priority = 100, Progression progression = null) where T : class
+            public static async UniTask<T> LoadAdditiveSceneAsync<T>(string sceneName, bool activateOnLoad, uint priority = 100, Progression progression = null) where T : class
             {
                 var packageName = AssetPatcher.GetDefaultPackageName();
                 return await LoadAdditiveSceneAsync<T>(packageName, sceneName, activateOnLoad, priority, progression);
@@ -1707,7 +1717,7 @@ namespace OxGFrame.CoreFrame
             /// <param name="priority"></param>
             /// <param name="progression"></param>
             /// <returns></returns>
-            public static async UniTask LoadAdditiveSceneAsync(string packageName, string sceneName, bool activateOnLoad = true, uint priority = 100, Progression progression = null)
+            public static async UniTask LoadAdditiveSceneAsync(string packageName, string sceneName, bool activateOnLoad, uint priority = 100, Progression progression = null)
             {
                 await LoadAdditiveSceneAsync(packageName, sceneName, LocalPhysicsMode.None, true, activateOnLoad, priority, progression);
             }
@@ -1751,7 +1761,7 @@ namespace OxGFrame.CoreFrame
             /// <para>From Build is &lt;AsyncOperation&gt;</para>
             /// <para>From Bundle is &lt;BundlePack&gt;</para>
             /// </returns>
-            public static async UniTask<T> LoadAdditiveSceneAsync<T>(string packageName, string sceneName, bool activateOnLoad = true, uint priority = 100, Progression progression = null) where T : class
+            public static async UniTask<T> LoadAdditiveSceneAsync<T>(string packageName, string sceneName, bool activateOnLoad, uint priority = 100, Progression progression = null) where T : class
             {
                 return await LoadAdditiveSceneAsync<T>(packageName, sceneName, LocalPhysicsMode.None, true, activateOnLoad, priority, progression);
             }
@@ -1791,7 +1801,7 @@ namespace OxGFrame.CoreFrame
             /// </summary>
             /// <param name="sceneName"></param>
             /// <param name="progression"></param>
-            public static void LoadAdditiveScene(string sceneName, Progression progression = null)
+            public static void LoadAdditiveScene(string sceneName, Progression progression)
             {
                 var packageName = AssetPatcher.GetDefaultPackageName();
                 LoadAdditiveScene(packageName, sceneName, progression);
@@ -1817,7 +1827,7 @@ namespace OxGFrame.CoreFrame
             /// <param name="packageName"></param>
             /// <param name="sceneName"></param>
             /// <param name="progression"></param>
-            public static void LoadAdditiveScene(string packageName, string sceneName, Progression progression = null)
+            public static void LoadAdditiveScene(string packageName, string sceneName, Progression progression)
             {
                 LoadAdditiveScene(packageName, sceneName, LocalPhysicsMode.None, true, progression);
             }
@@ -2190,7 +2200,7 @@ namespace OxGFrame.CoreFrame
             /// <param name="priority"></param>
             /// <param name="progression"></param>
             /// <returns></returns>
-            public static async UniTask LoadSceneAsync(string sceneName, LoadSceneMode loadSceneMode, LocalPhysicsMode localPhysicsMode = LocalPhysicsMode.None, bool activateOnLoad = true, uint priority = 100, Progression progression = null)
+            public static async UniTask LoadSceneAsync(string sceneName, LoadSceneMode loadSceneMode, LocalPhysicsMode localPhysicsMode, bool activateOnLoad = true, uint priority = 100, Progression progression = null)
             {
                 var packageName = AssetPatcher.GetDefaultPackageName();
                 await LoadSceneAsync(packageName, sceneName, loadSceneMode, localPhysicsMode, activateOnLoad, priority, progression);
@@ -2228,7 +2238,7 @@ namespace OxGFrame.CoreFrame
             /// <para>From Build is &lt;AsyncOperation&gt;</para>
             /// <para>From Bundle is &lt;BundlePack&gt;</para>
             /// </returns>
-            public static async UniTask<T> LoadSceneAsync<T>(string sceneName, LoadSceneMode loadSceneMode, LocalPhysicsMode localPhysicsMode = LocalPhysicsMode.None, bool activateOnLoad = true, uint priority = 100, Progression progression = null) where T : class
+            public static async UniTask<T> LoadSceneAsync<T>(string sceneName, LoadSceneMode loadSceneMode, LocalPhysicsMode localPhysicsMode, bool activateOnLoad = true, uint priority = 100, Progression progression = null) where T : class
             {
                 var packageName = AssetPatcher.GetDefaultPackageName();
                 return await LoadSceneAsync<T>(packageName, sceneName, loadSceneMode, localPhysicsMode, activateOnLoad, priority, progression);
@@ -2268,7 +2278,7 @@ namespace OxGFrame.CoreFrame
             /// <param name="priority"></param>
             /// <param name="progression"></param>
             /// <returns></returns>
-            public static async UniTask LoadSceneAsync(string packageName, string sceneName, LoadSceneMode loadSceneMode, LocalPhysicsMode localPhysicsMode = LocalPhysicsMode.None, bool activateOnLoad = true, uint priority = 100, Progression progression = null)
+            public static async UniTask LoadSceneAsync(string packageName, string sceneName, LoadSceneMode loadSceneMode, LocalPhysicsMode localPhysicsMode, bool activateOnLoad = true, uint priority = 100, Progression progression = null)
             {
                 if (TryRefineBuildScenePath(sceneName, out int index))
                 {
@@ -2323,7 +2333,7 @@ namespace OxGFrame.CoreFrame
             /// <para>From Build is &lt;AsyncOperation&gt;</para>
             /// <para>From Bundle is &lt;BundlePack&gt;</para>
             /// </returns>
-            public static async UniTask<T> LoadSceneAsync<T>(string packageName, string sceneName, LoadSceneMode loadSceneMode, LocalPhysicsMode localPhysicsMode = LocalPhysicsMode.None, bool activateOnLoad = true, uint priority = 100, Progression progression = null) where T : class
+            public static async UniTask<T> LoadSceneAsync<T>(string packageName, string sceneName, LoadSceneMode loadSceneMode, LocalPhysicsMode localPhysicsMode, bool activateOnLoad = true, uint priority = 100, Progression progression = null) where T : class
             {
                 if (TryRefineBuildScenePath(sceneName, out int index))
                 {
@@ -2342,7 +2352,7 @@ namespace OxGFrame.CoreFrame
             /// <param name="loadSceneMode"></param>
             /// <param name="progression"></param>
             /// <returns></returns>
-            public static async UniTask<AsyncOperation> LoadSceneAsync(int buildIndex, LoadSceneMode loadSceneMode = LoadSceneMode.Single, Progression progression = null)
+            public static async UniTask<AsyncOperation> LoadSceneAsync(int buildIndex, LoadSceneMode loadSceneMode, Progression progression)
             {
                 return await USManager.GetInstance().LoadFromBuildAsync(buildIndex, loadSceneMode, LocalPhysicsMode.None, progression);
             }
@@ -2401,7 +2411,7 @@ namespace OxGFrame.CoreFrame
             /// <param name="loadSceneMode"></param>
             /// <param name="localPhysicsMode"></param>
             /// <param name="progression"></param>
-            public static void LoadScene(string packageName, string sceneName, LoadSceneMode loadSceneMode, LocalPhysicsMode localPhysicsMode = LocalPhysicsMode.None, Progression progression = null)
+            public static void LoadScene(string packageName, string sceneName, LoadSceneMode loadSceneMode, LocalPhysicsMode localPhysicsMode, Progression progression = null)
             {
                 if (TryRefineBuildScenePath(sceneName, out int index))
                 {
@@ -2420,7 +2430,7 @@ namespace OxGFrame.CoreFrame
             /// <param name="loadSceneMode"></param>
             /// <param name="progression"></param>
             /// <returns></returns>
-            public static Scene LoadScene(int buildIndex, LoadSceneMode loadSceneMode = LoadSceneMode.Single, Progression progression = null)
+            public static Scene LoadScene(int buildIndex, LoadSceneMode loadSceneMode, Progression progression)
             {
                 return USManager.GetInstance().LoadFromBuild(buildIndex, loadSceneMode, LocalPhysicsMode.None, progression);
             }

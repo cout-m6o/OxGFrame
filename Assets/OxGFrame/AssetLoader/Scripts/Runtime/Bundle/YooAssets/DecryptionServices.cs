@@ -179,7 +179,9 @@ namespace OxGFrame.AssetLoader.Bundle
 #else
         #region IBundleMemoryDecryptor
         /// <summary>
-        /// [YooAsset v3] 記憶體解密 (Web 平台與 Fallback 載入使用此路徑)
+        /// [YooAsset v3] 記憶體解密 (Web 平台、Raw File、Archive 以及本地 AssetBundle 皆使用此路徑)
+        /// <para> ※備註：YooAsset 載入本地 AssetBundle 時，選用解密介面的優先順序為 Offset > Memory > Stream，由於基類已實作 Memory 介面，因此除了 Offset 以外的加密方式皆會以 LoadFromMemory 載入 (不會進入 Stream 介面) </para>
+        /// <para> ※備註：基類的 Memory 介面不可移除，YooAsset 於 Web 平台 (瀏覽器沙盒無法使用檔案串流)、Raw File、Archive，以及引擎載入失敗後的備援載入 (AssetBundleFallbackDecryptor) 皆僅接受 Memory 介面；另外各加密方式的 DecryptStream 皆返回整包解密後的 MemoryStream，因此改以 Stream 介面載入並不會比 Memory 介面節省記憶體 </para>
         /// </summary>
         /// <param name="args"></param>
         /// <returns></returns>
@@ -199,7 +201,7 @@ namespace OxGFrame.AssetLoader.Bundle
         }
         #endregion
 
-        #region IBundleStreamDecryptor (由子類宣告介面後, 直接以基類實作滿足)
+        #region IBundleStreamDecryptor (由子類宣告介面後，直接以基類實作滿足)
         /// <summary>
         /// [YooAsset v3] 取得串流讀取緩衝大小
         /// </summary>

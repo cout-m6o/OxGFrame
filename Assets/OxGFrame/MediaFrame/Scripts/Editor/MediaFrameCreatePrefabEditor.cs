@@ -252,25 +252,205 @@ namespace OxGFrame.MediaFrame.Editor
 
         private static void _CreatePrefabAssetDirectly(string name, string directory, DoCreatePrefabAsset createAction)
         {
-            string path = Path.Combine(directory, $"{name}.prefab");
-            path = AssetDatabase.GenerateUniqueAssetPath(path);
+            try
+            {
+                string path = Path.Combine(directory, $"{name}.prefab");
+                path = AssetDatabase.GenerateUniqueAssetPath(path);
 
-            GameObject go = createAction.CreateGameObject(Path.GetFileNameWithoutExtension(path));
-            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(go, path);
-            GameObject.DestroyImmediate(go);
+                GameObject go = createAction.CreateGameObject(Path.GetFileNameWithoutExtension(path));
+                GameObject prefab = PrefabUtility.SaveAsPrefabAsset(go, path);
+                GameObject.DestroyImmediate(go);
 
-            // Call post-creation hook
-            createAction.OnPrefabCreated(prefab);
+                // Call post-creation hook
+                createAction.OnPrefabCreated(prefab);
+            }
+            finally
+            {
+                // 直接建立的流程不經過 Project 視窗的命名編輯，createAction (HideAndDontSave) 不會被自動清理，使用後必須手動銷毀
+                if (createAction != null)
+                    ScriptableObject.DestroyImmediate(createAction);
+            }
         }
 
         private static string _GetSelectedAssetDirectory()
         {
             string path = AssetDatabase.GetAssetPath(Selection.activeObject);
+
+            // 未選取任何資產時 (例如由選單列建立) 路徑為空字串，Path.GetDirectoryName("") 會拋出 ArgumentException，此時回退至 Assets 根目錄
+            // 結尾保留 "/"，讓 Path.Combine 在 Windows 也組出以 "Assets/" 開頭的路徑 (Unity 以此判斷是否為完整的資產路徑)
+            if (string.IsNullOrEmpty(path))
+                return "Assets/";
+
             if (Directory.Exists(path))
                 return path;
             else
                 return Path.GetDirectoryName(path);
         }
+
+        #region Automation
+        /// <summary>
+        /// 可用的 Template Prefab 名稱
+        /// </summary>
+        public static readonly string[] TEMPLATE_NAMES = new string[]
+        {
+            "audio_sole",
+            "audio_sound_effect",
+            "video_render_texture",
+            "video_camera"
+        };
+
+        /// <summary>
+        /// 於指定路徑建立 Template Prefab (供 Unity CLI 與自動化流程調用)
+        /// <para>執行與選單相同的建立動作，差異僅在於不進入 Project 視窗的命名編輯；指定 Clip 時與 Convert 選單相同，會一併設置 Clip。</para>
+        /// </summary>
+        /// <param name="templateName">Template 名稱 (audio_sole, audio_sound_effect, video_render_texture, video_camera)</param>
+        /// <param name="assetPath">Prefab 的資源路徑 (ex: Assets/Prefabs/Audio/Click.prefab)</param>
+        /// <param name="clipPath">AudioClip 或 VideoClip 的資源路徑 (選填)</param>
+        /// <param name="error">失敗原因 (成功時為 null)</param>
+        /// <returns></returns>
+        public static bool CreatePrefabFromTemplate(string templateName, string assetPath, string clipPath, out string error)
+        {
+            if (System.Array.IndexOf(TEMPLATE_NAMES, templateName) == -1)
+            {
+                error = $"Unknown template name: \"{templateName}\" (available: {string.Join(", ", TEMPLATE_NAMES)}).";
+                Debug.LogError(error);
+                return false;
+            }
+
+            // 取得指定的 Clip (類型需與 Template 相符)
+            bool hasClip = !string.IsNullOrEmpty(clipPath);
+            bool isAudio = templateName.StartsWith("audio_", System.StringComparison.Ordinal);
+            AudioClip audioClip = (hasClip && isAudio) ? AssetDatabase.LoadAssetAtPath<AudioClip>(clipPath) : null;
+            UnityEngine.Video.VideoClip videoClip = (hasClip && !isAudio) ? AssetDatabase.LoadAssetAtPath<UnityEngine.Video.VideoClip>(clipPath) : null;
+            if (hasClip &&
+                audioClip == null &&
+                videoClip == null)
+            {
+                error = $"Cannot find the {(isAudio ? nameof(AudioClip) : nameof(UnityEngine.Video.VideoClip))} asset. Clip Path: {clipPath}";
+                Debug.LogError(error);
+                return false;
+            }
+
+            if (!_PrepareCreateAssetPath(ref assetPath, ".prefab", out error))
+            {
+                Debug.LogError(error);
+                return false;
+            }
+
+            DoCreatePrefabAsset createAction;
+            switch (templateName)
+            {
+                case "audio_sole":
+                    if (hasClip)
+                    {
+                        var action = ScriptableObject.CreateInstance<DoCreateAudioSolePrefabFromClip>();
+                        action.audioClip = audioClip;
+                        createAction = action;
+                    }
+                    else
+                        createAction = ScriptableObject.CreateInstance<DoCreateAudioSolePrefabAsset>();
+                    break;
+                case "audio_sound_effect":
+                    if (hasClip)
+                    {
+                        var action = ScriptableObject.CreateInstance<DoCreateAudioSoundEffectPrefabFromClip>();
+                        action.audioClip = audioClip;
+                        createAction = action;
+                    }
+                    else
+                        createAction = ScriptableObject.CreateInstance<DoCreateAudioSoundEffectPrefabAsset>();
+                    break;
+                case "video_render_texture":
+                    if (hasClip)
+                    {
+                        var action = ScriptableObject.CreateInstance<DoCreateVideoRenderTexturePrefabFromClip>();
+                        action.videoClip = videoClip;
+                        createAction = action;
+                    }
+                    else
+                        createAction = ScriptableObject.CreateInstance<DoCreateVideoRenderTexturePrefabAsset>();
+                    break;
+                default:
+                    if (hasClip)
+                    {
+                        var action = ScriptableObject.CreateInstance<DoCreateVideoCameraPrefabFromClip>();
+                        action.videoClip = videoClip;
+                        createAction = action;
+                    }
+                    else
+                        createAction = ScriptableObject.CreateInstance<DoCreateVideoCameraPrefabAsset>();
+                    break;
+            }
+
+            try
+            {
+                createAction.Action(0, assetPath, null);
+            }
+            finally
+            {
+                // 不經過命名編輯時 createAction 不會被自動清理，使用後必須手動銷毀
+                if (createAction != null)
+                    ScriptableObject.DestroyImmediate(createAction);
+            }
+
+            if (!File.Exists(assetPath))
+            {
+                error = $"Failed to create the prefab: {assetPath}";
+                Debug.LogError(error);
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 檢查並準備欲建立資源的路徑
+        /// <para>必須位於 Assets 或 Packages 內、副檔名相符且尚未存在；所屬資料夾不存在時自動建立 (僅限 Assets 內)。</para>
+        /// </summary>
+        /// <param name="assetPath"></param>
+        /// <param name="extension"></param>
+        /// <param name="error"></param>
+        /// <returns></returns>
+        private static bool _PrepareCreateAssetPath(ref string assetPath, string extension, out string error)
+        {
+            error = null;
+            assetPath = string.IsNullOrEmpty(assetPath) ? string.Empty : assetPath.Replace('\\', '/');
+
+            bool isInAssets = assetPath.StartsWith("Assets/", System.StringComparison.Ordinal);
+            bool isInPackages = assetPath.StartsWith("Packages/", System.StringComparison.Ordinal);
+            if ((!isInAssets && !isInPackages) ||
+                !assetPath.EndsWith(extension, System.StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrEmpty(Path.GetFileNameWithoutExtension(assetPath)) ||
+                System.Array.IndexOf(assetPath.Split('/'), "..") != -1)
+            {
+                error = $"Invalid asset path: \"{assetPath}\" (ex: Assets/Folder/Name{extension}).";
+                return false;
+            }
+
+            if (File.Exists(assetPath))
+            {
+                error = $"The asset already exists: {assetPath}";
+                return false;
+            }
+
+            string directory = Path.GetDirectoryName(assetPath).Replace('\\', '/');
+            if (!Directory.Exists(directory))
+            {
+                // Packages 內的路徑必須對應至既有的資料夾，避免建立出不屬於任何套件的資料夾
+                if (!isInAssets)
+                {
+                    error = $"Cannot find the directory: {directory}";
+                    return false;
+                }
+
+                // 建立後需重新整理，讓 Unity 先匯入該資料夾
+                Directory.CreateDirectory(directory);
+                AssetDatabase.Refresh();
+            }
+
+            return true;
+        }
+        #endregion
 
         #region Template Prefab 創建菜單
         [MenuItem("Assets/Create/OxGFrame/Media Frame/Audio/Template Prefabs/Template Audio Sole (Sole Audio Prefab)", isValidateFunction: false, priority: 51)]

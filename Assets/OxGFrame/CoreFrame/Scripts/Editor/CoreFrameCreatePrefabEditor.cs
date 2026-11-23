@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
 using UnityEditor;
 using UnityEditor.ProjectWindowCallback;
 using UnityEngine;
@@ -84,6 +85,12 @@ namespace OxGFrame.CoreFrame.Editor
         static string GetSelectedAssetDirectory()
         {
             string path = AssetDatabase.GetAssetPath(Selection.activeObject);
+
+            // 未選取任何資產時 (例如由選單列建立) 路徑為空字串，Path.GetDirectoryName("") 會拋出 ArgumentException，此時回退至 Assets 根目錄
+            // 結尾保留 "/"，讓 Path.Combine 在 Windows 也組出以 "Assets/" 開頭的路徑 (Unity 以此判斷是否為完整的資產路徑)
+            if (string.IsNullOrEmpty(path))
+                return "Assets/";
+
             if (Directory.Exists(path))
                 return path;
             else
@@ -113,5 +120,77 @@ namespace OxGFrame.CoreFrame.Editor
         {
             CreatePrefabAsset("NewTplRectTransformCP", ScriptableObject.CreateInstance<DoCreateRectTransformPrefabAsset>());
         }
+
+        #region Automation
+        /// <summary>
+        /// 可用的 Template Prefab 名稱
+        /// </summary>
+        public static readonly string[] TEMPLATE_NAMES = new string[]
+        {
+            "ui",
+            "sr",
+            "cp_transform",
+            "cp_rect_transform"
+        };
+
+        /// <summary>
+        /// 於指定路徑建立 Template Prefab (供 Unity CLI 與自動化流程調用)
+        /// <para>執行與選單相同的建立動作，差異僅在於不進入 Project 視窗的命名編輯。</para>
+        /// </summary>
+        /// <param name="templateName">Template 名稱 (ui, sr, cp_transform, cp_rect_transform)</param>
+        /// <param name="assetPath">Prefab 的資源路徑 (ex: Assets/Prefabs/ShopUI.prefab)</param>
+        /// <param name="error">失敗原因 (成功時為 null)</param>
+        /// <returns></returns>
+        public static bool CreatePrefabFromTemplate(string templateName, string assetPath, out string error)
+        {
+            if (Array.IndexOf(TEMPLATE_NAMES, templateName) == -1)
+            {
+                error = $"Unknown template name: \"{templateName}\" (available: {string.Join(", ", TEMPLATE_NAMES)}).";
+                Debug.LogError(error);
+                return false;
+            }
+
+            if (!AutomationUtility.PrepareCreateAssetPath(ref assetPath, ".prefab", out error))
+            {
+                Debug.LogError(error);
+                return false;
+            }
+
+            DoCreatePrefabAsset createAction;
+            switch (templateName)
+            {
+                case "ui":
+                    createAction = ScriptableObject.CreateInstance<DoCreateUIPrefabAsset>();
+                    break;
+                case "cp_rect_transform":
+                    createAction = ScriptableObject.CreateInstance<DoCreateRectTransformPrefabAsset>();
+                    break;
+                default:
+                    // sr 與 cp_transform 皆為一般的 Transform Prefab
+                    createAction = ScriptableObject.CreateInstance<DoCreatePrefabAsset>();
+                    break;
+            }
+
+            try
+            {
+                createAction.Action(0, assetPath, null);
+            }
+            finally
+            {
+                // 不經過命名編輯時 createAction 不會被自動清理，使用後必須手動銷毀
+                if (createAction != null)
+                    ScriptableObject.DestroyImmediate(createAction);
+            }
+
+            if (!File.Exists(assetPath))
+            {
+                error = $"Failed to create the prefab: {assetPath}";
+                Debug.LogError(error);
+                return false;
+            }
+
+            return true;
+        }
+        #endregion
     }
 }

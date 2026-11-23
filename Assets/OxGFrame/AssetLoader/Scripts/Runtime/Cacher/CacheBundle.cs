@@ -47,13 +47,37 @@ namespace OxGFrame.AssetLoader.Cacher
 
         public override BundlePack GetFromCache(string assetName)
         {
-            if (this.HasInCache(assetName))
+            // 僅需查詢一次 (Additive 場景緩存於 _additiveScenes，不在 _cacher 內)
+            this._cacher.TryGetValue(assetName, out BundlePack pack);
+            return pack;
+        }
+
+        /// <summary>
+        /// 檢查載入句柄是否成功 (失敗時會釋放句柄並嘗試卸載)
+        /// <para> 避免失敗的句柄殘留於緩存，導致後續永遠取得失敗結果且重試機制無法重新載入 </para>
+        /// </summary>
+        /// <param name="package"></param>
+        /// <param name="assetName"></param>
+        /// <param name="handle"></param>
+        /// <returns></returns>
+        private bool _CheckHandleSucceed(ResourcePackage package, string assetName, HandleBase handle)
+        {
+            // 句柄已失效 (ex: 載入期間包裹被銷毀)，無結果可用也無需釋放
+            if (!handle.IsValid)
             {
-                if (this._cacher.TryGetValue(assetName, out BundlePack pack))
-                    return pack;
+                Logging.PrintWarning<Logger>($"【Load Failed】 => << {nameof(CacheBundle)} >> Asset: {assetName} handle is invalid (the package may have been destroyed while loading).");
+                return false;
             }
 
-            return null;
+            if (handle.Status.IsSucceed())
+                return true;
+
+            Logging.PrintWarning<Logger>($"【Load Failed】 => << {nameof(CacheBundle)} >> Asset: {assetName} handle status: {handle.Status}, the failed handle will be released.");
+
+            // 釋放失敗的句柄，並嘗試卸載其 Provider (YooAsset 會保留仍被引用的失敗 Provider，不釋放的話重新載入只會取得相同的失敗結果)
+            handle.Release();
+            package.TryUnloadUnusedAsset(assetName, _DEFAULT_LOOP_COUNT);
+            return false;
         }
 
         #region Scene
@@ -82,11 +106,14 @@ namespace OxGFrame.AssetLoader.Cacher
             }
 
             // Single 場景才使用單飛，檢查是否有進行中的載入任務
-            if (this.TryGetLoadingTask(assetName, out var existingTask))
+            while (this.TryGetLoadingTask(assetName, out var existingTask))
             {
                 Logging.Print<Logger>($"Scene: {assetName} is loading, waiting for existing task...");
-                var source = (UniTaskCompletionSource<BundlePack>)existingTask;
-                return await source.Task;
+                if (existingTask is UniTaskCompletionSource<BundlePack> source)
+                    return await source.Task;
+
+                // 進行中的任務並非場景載入任務 (ex: 同名的資產載入)，無法共用其結果，等待其結束後再行載入
+                await this.WaitForLoadingTask(assetName);
             }
 
             // 建立載入任務並加入緩存 (只有 Single 場景會走到這裡)
@@ -508,8 +535,11 @@ namespace OxGFrame.AssetLoader.Cacher
 
                     try
                     {
-                        var source = (UniTaskCompletionSource)existingTask;
-                        await source.Task;
+                        // 進行中的任務可能是預載任務 (非泛型) 或型別化的載入任務 (泛型)，後者無法轉型，改為等待其結束
+                        if (existingTask is UniTaskCompletionSource source)
+                            await source.Task;
+                        else
+                            await this.WaitForLoadingTask(assetName);
 
                         // 等待完成後更新進度
                         this.currentCount++;
@@ -526,7 +556,7 @@ namespace OxGFrame.AssetLoader.Cacher
                 if (this.HasInCache(assetName))
                 {
                     BundlePack pack = this.GetFromCache(assetName);
-                    if (pack.IsRawFileOperationHandleValid())
+                    if (pack != null && pack.IsRawFileOperationHandleValid())
                     {
                         this.currentCount++;
                         progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
@@ -587,8 +617,12 @@ namespace OxGFrame.AssetLoader.Cacher
                     {
                         if (req.IsDone)
                         {
-                            loaded = true;
-                            pack.SetPack(packageName, assetName, req);
+                            // 載入失敗的句柄不納入緩存 (釋放後交由重試機制處理)
+                            if (this._CheckHandleSucceed(package, assetName, req))
+                            {
+                                loaded = true;
+                                pack.SetPack(packageName, assetName, req);
+                            }
                             break;
                         }
                         await UniTask.Yield();
@@ -624,7 +658,12 @@ namespace OxGFrame.AssetLoader.Cacher
 
                 this.GetRetryCounter(assetName).DelRetryCount();
                 this.TryRemoveLoadingTask(assetName);
-                await this.PreloadRawFileAsync(packageName, new string[] { assetName }, priority, progression, maxRetryCount);
+                // 巢狀重試會重置進度計數，因此不傳入 progression 並於結束後還原，交由最外層統一更新進度 (避免批次預載的進度被覆寫)
+                float currentCount = this.currentCount;
+                float totalCount = this.totalCount;
+                await this.PreloadRawFileAsync(packageName, new string[] { assetName }, priority, null, maxRetryCount);
+                this.currentCount = currentCount;
+                this.totalCount = totalCount;
             }
         }
 
@@ -656,7 +695,7 @@ namespace OxGFrame.AssetLoader.Cacher
                 if (this.HasInCache(assetName))
                 {
                     BundlePack pack = this.GetFromCache(assetName);
-                    if (pack.IsRawFileOperationHandleValid())
+                    if (pack != null && pack.IsRawFileOperationHandleValid())
                     {
                         this.currentCount++;
                         progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
@@ -675,7 +714,8 @@ namespace OxGFrame.AssetLoader.Cacher
                         var req = package.LoadRawFileSync(assetName);
                         if (req != null)
                         {
-                            if (req.IsDone)
+                            // 載入失敗的句柄不納入緩存 (釋放後交由重試機制處理)
+                            if (req.IsDone && this._CheckHandleSucceed(package, assetName, req))
                             {
                                 this.currentCount++;
                                 progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
@@ -712,7 +752,13 @@ namespace OxGFrame.AssetLoader.Cacher
                         }
 
                         this.GetRetryCounter(assetName).DelRetryCount();
-                        this.PreloadRawFile(packageName, new string[] { assetName }, progression, maxRetryCount);
+                        // 巢狀重試會重置進度計數，因此不傳入 progression 並於結束後還原，再由此處統一更新進度 (避免批次預載的進度被覆寫)
+                        float currentCount = this.currentCount;
+                        float totalCount = this.totalCount;
+                        this.PreloadRawFile(packageName, new string[] { assetName }, null, maxRetryCount);
+                        this.currentCount = currentCount + 1;
+                        this.totalCount = totalCount;
+                        progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
                         continue;
                     }
                 }
@@ -735,21 +781,26 @@ namespace OxGFrame.AssetLoader.Cacher
             BundlePack pack = null;
 
             // 檢查是否有進行中的載入任務
-            if (this.TryGetLoadingTask(assetName, out var existingTask))
+            while (this.TryGetLoadingTask(assetName, out var existingTask))
             {
                 Logging.Print<Logger>($"RawFile: {assetName} is loading, waiting for existing task...");
-                var source = (UniTaskCompletionSource<T>)existingTask;
-                var data = await source.Task;
-                if (data != null)
+                if (existingTask is UniTaskCompletionSource<T> source)
                 {
-                    pack = this.GetFromCache(assetName);
-                    if (pack != null)
+                    var data = await source.Task;
+                    if (data != null)
                     {
-                        pack.AddRef();
-                        Logging.Print<Logger>($"【Load Shared】 => Current << {nameof(CacheBundle)} >> Cache Count: {this.count}, asset: {assetName}, ref: {pack.refCount}");
+                        pack = this.GetFromCache(assetName);
+                        if (pack != null)
+                        {
+                            pack.AddRef();
+                            Logging.Print<Logger>($"【Load Shared】 => Current << {nameof(CacheBundle)} >> Cache Count: {this.count}, asset: {assetName}, ref: {pack.refCount}");
+                        }
                     }
+                    return data;
                 }
-                return data;
+
+                // 進行中的任務型別不同 (ex: 預載任務或以不同型別載入)，無法共用其結果，等待其結束後改由緩存流程取得
+                await this.WaitForLoadingTask(assetName);
             }
 
             // 先從緩存拿
@@ -826,8 +877,12 @@ namespace OxGFrame.AssetLoader.Cacher
 
                         if (req.IsDone)
                         {
-                            loaded = true;
-                            pack.SetPack(packageName, assetName, req);
+                            // 載入失敗的句柄不納入緩存 (釋放後交由重試機制處理)
+                            if (this._CheckHandleSucceed(package, assetName, req))
+                            {
+                                loaded = true;
+                                pack.SetPack(packageName, assetName, req);
+                            }
                             break;
                         }
                         await UniTask.Yield();
@@ -924,7 +979,8 @@ namespace OxGFrame.AssetLoader.Cacher
                     var req = package.LoadRawFileSync(assetName);
                     if (req != null)
                     {
-                        if (req.IsDone)
+                        // 載入失敗的句柄不納入緩存 (釋放後交由重試機制處理)
+                        if (req.IsDone && this._CheckHandleSucceed(package, assetName, req))
                         {
                             this.currentCount++;
                             progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
@@ -1031,8 +1087,11 @@ namespace OxGFrame.AssetLoader.Cacher
 
                     try
                     {
-                        var source = (UniTaskCompletionSource)existingTask;
-                        await source.Task;
+                        // 進行中的任務可能是預載任務 (非泛型) 或型別化的載入任務 (泛型)，後者無法轉型，改為等待其結束
+                        if (existingTask is UniTaskCompletionSource source)
+                            await source.Task;
+                        else
+                            await this.WaitForLoadingTask(assetName);
 
                         // 等待完成後更新進度
                         this.currentCount++;
@@ -1049,7 +1108,7 @@ namespace OxGFrame.AssetLoader.Cacher
                 if (this.HasInCache(assetName))
                 {
                     BundlePack pack = this.GetFromCache(assetName);
-                    if (pack.IsAssetOperationHandleValid())
+                    if (pack != null && pack.IsAssetOperationHandleValid())
                     {
                         this.currentCount++;
                         progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
@@ -1111,8 +1170,12 @@ namespace OxGFrame.AssetLoader.Cacher
                     {
                         if (req.IsDone)
                         {
-                            loaded = true;
-                            pack.SetPack(packageName, assetName, req);
+                            // 載入失敗的句柄不納入緩存 (釋放後交由重試機制處理)
+                            if (this._CheckHandleSucceed(package, assetName, req))
+                            {
+                                loaded = true;
+                                pack.SetPack(packageName, assetName, req);
+                            }
                             break;
                         }
                         await UniTask.Yield();
@@ -1148,7 +1211,12 @@ namespace OxGFrame.AssetLoader.Cacher
 
                 this.GetRetryCounter(assetName).DelRetryCount();
                 this.TryRemoveLoadingTask(assetName);
-                await this.PreloadAssetAsync<T>(packageName, new string[] { assetName }, priority, progression, maxRetryCount);
+                // 巢狀重試會重置進度計數，因此不傳入 progression 並於結束後還原，交由最外層統一更新進度 (避免批次預載的進度被覆寫)
+                float currentCount = this.currentCount;
+                float totalCount = this.totalCount;
+                await this.PreloadAssetAsync<T>(packageName, new string[] { assetName }, priority, null, maxRetryCount);
+                this.currentCount = currentCount;
+                this.totalCount = totalCount;
             }
         }
 
@@ -1180,7 +1248,7 @@ namespace OxGFrame.AssetLoader.Cacher
                 if (this.HasInCache(assetName))
                 {
                     BundlePack pack = this.GetFromCache(assetName);
-                    if (pack.IsAssetOperationHandleValid())
+                    if (pack != null && pack.IsAssetOperationHandleValid())
                     {
                         this.currentCount++;
                         progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
@@ -1199,7 +1267,8 @@ namespace OxGFrame.AssetLoader.Cacher
                         var req = package.LoadAssetSync<T>(assetName);
                         if (req != null)
                         {
-                            if (req.IsDone)
+                            // 載入失敗的句柄不納入緩存 (釋放後交由重試機制處理)
+                            if (req.IsDone && this._CheckHandleSucceed(package, assetName, req))
                             {
                                 this.currentCount++;
                                 progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
@@ -1236,7 +1305,13 @@ namespace OxGFrame.AssetLoader.Cacher
                         }
 
                         this.GetRetryCounter(assetName).DelRetryCount();
-                        this.PreloadAsset<T>(packageName, new string[] { assetName }, progression, maxRetryCount);
+                        // 巢狀重試會重置進度計數，因此不傳入 progression 並於結束後還原，再由此處統一更新進度 (避免批次預載的進度被覆寫)
+                        float currentCount = this.currentCount;
+                        float totalCount = this.totalCount;
+                        this.PreloadAsset<T>(packageName, new string[] { assetName }, null, maxRetryCount);
+                        this.currentCount = currentCount + 1;
+                        this.totalCount = totalCount;
+                        progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
                         continue;
                     }
                 }
@@ -1259,22 +1334,27 @@ namespace OxGFrame.AssetLoader.Cacher
             BundlePack pack = null;
 
             // 檢查是否有進行中的載入任務
-            if (this.TryGetLoadingTask(assetName, out var existingTask))
+            while (this.TryGetLoadingTask(assetName, out var existingTask))
             {
                 Logging.Print<Logger>($"Asset: {assetName} is loading, waiting for existing task...");
-                // 等待現有的任務完成並返回結果
-                var source = (UniTaskCompletionSource<T>)existingTask;
-                var asset = await source.Task;
-                if (asset != null)
+                if (existingTask is UniTaskCompletionSource<T> source)
                 {
-                    pack = this.GetFromCache(assetName);
-                    if (pack != null)
+                    // 等待現有的任務完成並返回結果
+                    var asset = await source.Task;
+                    if (asset != null)
                     {
-                        pack.AddRef();
-                        Logging.Print<Logger>($"【Load Shared】 => Current << {nameof(CacheBundle)} >> Cache Count: {this.count}, asset: {assetName}, ref: {pack.refCount}");
+                        pack = this.GetFromCache(assetName);
+                        if (pack != null)
+                        {
+                            pack.AddRef();
+                            Logging.Print<Logger>($"【Load Shared】 => Current << {nameof(CacheBundle)} >> Cache Count: {this.count}, asset: {assetName}, ref: {pack.refCount}");
+                        }
                     }
+                    return asset;
                 }
-                return asset;
+
+                // 進行中的任務型別不同 (ex: 預載任務或以不同型別載入)，無法共用其結果，等待其結束後改由緩存流程取得
+                await this.WaitForLoadingTask(assetName);
             }
 
             // 先從緩存拿
@@ -1351,8 +1431,12 @@ namespace OxGFrame.AssetLoader.Cacher
 
                         if (req.IsDone)
                         {
-                            loaded = true;
-                            pack.SetPack(packageName, assetName, req);
+                            // 載入失敗的句柄不納入緩存 (釋放後交由重試機制處理)
+                            if (this._CheckHandleSucceed(package, assetName, req))
+                            {
+                                loaded = true;
+                                pack.SetPack(packageName, assetName, req);
+                            }
                             break;
                         }
 
@@ -1429,7 +1513,8 @@ namespace OxGFrame.AssetLoader.Cacher
                     var req = package.LoadAssetSync<T>(assetName);
                     if (req != null)
                     {
-                        if (req.IsDone)
+                        // 載入失敗的句柄不納入緩存 (釋放後交由重試機制處理)
+                        if (req.IsDone && this._CheckHandleSucceed(package, assetName, req))
                         {
                             this.currentCount++;
                             progression?.Invoke(this.currentCount / this.totalCount, this.currentCount, this.totalCount);
@@ -1503,13 +1588,14 @@ namespace OxGFrame.AssetLoader.Cacher
         /// <param name="processType"></param>
         private void _UnloadCore(string assetName, bool forceUnload, ProcessType processType)
         {
-            if (!this.HasInCache(assetName))
+            // 直接取得緩存判斷 (Additive 場景僅存在於場景計數緩存，不在 _cacher 內，同樣視為不在緩存，避免空引用)
+            BundlePack pack = this.GetFromCache(assetName);
+            if (pack == null)
             {
                 Logging.PrintWarning<Logger>($"【Unload】 Asset: {assetName} not in cache, skipping.");
                 return;
             }
 
-            BundlePack pack = this.GetFromCache(assetName);
             string packageName = pack.packageName;
 
             if (pack.IsRawFileOperationHandle() ||
@@ -1529,9 +1615,11 @@ namespace OxGFrame.AssetLoader.Cacher
 
                     if (shouldUnload)
                     {
-                        if (processType == ProcessType.RawFile)
+                        // 依句柄的實際類型釋放，而非依呼叫端指定的 processType
+                        // (避免以不符的類型卸載或釋放時，句柄尚未釋放就被移出緩存而造成洩漏，ex: ReleaseRawFiles 遇到 Asset 緩存)
+                        if (pack.IsRawFileOperationHandle())
                             pack.UnloadRawFile();
-                        else if (processType == ProcessType.Asset)
+                        else
                             pack.UnloadAsset();
 
                         this._cacher[assetName] = null;

@@ -73,21 +73,41 @@ namespace OxGFrame.CoreFrame
             // 變數存取權檢測
             string[] bindArgs = GetAccessModifierSplitNameBySeparator(bindInfo);
 
+            // 綁定名稱僅含分隔符時 (ex: _Node@$)，視為無效命名，避免 IndexOutOfRangeException 中斷整個綁定流程
+            if (bindArgs == null ||
+                bindArgs.Length == 0)
+            {
+                Logging.PrintError<Logger>($"Invalid naming format for '{name}'. Please check the bind name.");
+                return;
+            }
+
             // MyObj*Txt$public => ["MyObj*Txt", "public"]
             string fullBindName = bindArgs[0];
 
-            // 匹配 Attr []
-            string pattern = @"\[(.*?)\]";
-            MatchCollection attrMatches = Regex.Matches(fullBindName, pattern);
-            if (attrMatches.Count > 0)
+            // 匹配 Attr [] (名稱中帶有方括號才需進行匹配)
+            if (fullBindName.IndexOf('[') >= 0)
             {
-                // 將所有方括號替換為空字串
-                fullBindName = Regex.Replace(fullBindName, pattern, "");
+                string pattern = @"\[(.*?)\]";
+                MatchCollection attrMatches = Regex.Matches(fullBindName, pattern);
+                if (attrMatches.Count > 0)
+                {
+                    // 將所有方括號替換為空字串
+                    fullBindName = Regex.Replace(fullBindName, pattern, "");
+                }
             }
             #endregion
 
             // 組件結尾檢測 => fullBindName = MyObj*Txt*Img = [MyObj, Txt, Img]
             string[] tails = GetTailSplitNameBySeparator(fullBindName);
+
+            // 移除 Attr 後名稱為空 (ex: _Node@[x]) 或僅含分隔符 (ex: _Node@*) 時，視為無效命名，避免異常中斷整個綁定流程
+            if (tails == null ||
+                tails.Length == 0)
+            {
+                Logging.PrintError<Logger>($"Invalid naming format for '{name}'. Please check the bind name.");
+                return;
+            }
+
             List<string> bindNames = new List<string>();
 
             // Multi Components
@@ -124,7 +144,9 @@ namespace OxGFrame.CoreFrame
         /// <returns></returns>
         public static bool CheckNodeHasStopEnd(string name)
         {
-            if (name.Substring(name.Length - 1) == FrameConfig.BIND_STOP_END)
+            // 使用 EndsWith 判斷，避免空名稱時 Substring 拋出異常，同時省去每個節點的字串配置
+            if (!string.IsNullOrEmpty(name) &&
+                name.EndsWith(FrameConfig.BIND_STOP_END, StringComparison.Ordinal))
                 return true;
             return false;
         }
@@ -136,14 +158,18 @@ namespace OxGFrame.CoreFrame
         /// <returns></returns>
         internal static bool CheckNodeHasPrefix(string name, FrameBase fBase)
         {
+            // 使用 StartsWith 判斷，避免空名稱時 Substring 拋出異常，同時省去每個節點的字串配置
+            if (string.IsNullOrEmpty(name))
+                return false;
+
             switch (fBase)
             {
                 case CPBase:
-                    if (name.Substring(0, 1) == FrameConfig.BIND_PREFIXES[1])
+                    if (name.StartsWith(FrameConfig.BIND_PREFIXES[1], StringComparison.Ordinal))
                         return true;
                     break;
                 default:
-                    if (name.Substring(0, 1) == FrameConfig.BIND_PREFIXES[0])
+                    if (name.StartsWith(FrameConfig.BIND_PREFIXES[0], StringComparison.Ordinal))
                         return true;
                     break;
             }
@@ -153,8 +179,12 @@ namespace OxGFrame.CoreFrame
 
         public static bool CheckNodeHasPrefix(string name)
         {
-            if (name.Substring(0, 1) == FrameConfig.BIND_PREFIXES[0] ||
-                name.Substring(0, 1) == FrameConfig.BIND_PREFIXES[1])
+            // 使用 StartsWith 判斷，避免空名稱時 Substring 拋出異常，同時省去字串配置
+            if (string.IsNullOrEmpty(name))
+                return false;
+
+            if (name.StartsWith(FrameConfig.BIND_PREFIXES[0], StringComparison.Ordinal) ||
+                name.StartsWith(FrameConfig.BIND_PREFIXES[1], StringComparison.Ordinal))
                 return true;
 
             return false;

@@ -311,16 +311,17 @@ namespace OxGFrame.AssetLoader.Bundle
                 string bundleUrlFileName = $"{PatchSettings.settings.bundleUrlCfgName}{PatchSettings.settings.bundleUrlCfgExtension}";
                 string pathName = Path.Combine(GetRequestStreamingAssetsPath(), bundleUrlFileName);
                 var data = await Requester.RequestBytes(pathName);
-                if (data.Length == 0)
+                // 請求失敗時會返回 null (ex: 配置文件不存在)，需一併防護
+                if (data == null || data.Length == 0)
                     return string.Empty;
 
                 #region Check data type
                 string content;
                 int pos = 0;
 
-                // Read header (non-encrypted)
-                var header = ReadInt16(data, ref pos);
-                if (header == PatchSettings.CIPHER_HEADER)
+                // Read header (non-encrypted)，長度不足以容納 Header 時直接視為明文
+                bool isCipher = data.Length >= 2 && ReadInt16(data, ref pos) == PatchSettings.CIPHER_HEADER;
+                if (isCipher)
                 {
                     // Read data without header
                     byte[] dataWithoutHeader = new byte[data.Length - 2];
@@ -563,7 +564,7 @@ namespace OxGFrame.AssetLoader.Bundle
             string rootFolderName = PatchSettings.settings.rootFolderName;
             string appCfgFileName = $"{PatchSettings.settings.appCfgName}{PatchSettings.settings.appCfgExtension}";
 
-            return Path.Combine($"{host}/{rootFolderName}/{productName}/{platform}", appCfgFileName);
+            return CombineUrl($"{host}/{rootFolderName}/{productName}/{platform}", appCfgFileName);
         }
 
         /// <summary>
@@ -580,16 +581,39 @@ namespace OxGFrame.AssetLoader.Bundle
             string rootFolderName = PatchSettings.settings.rootFolderName;
             string patchCfgFileName = $"{PatchSettings.settings.patchCfgName}{PatchSettings.settings.patchCfgExtension}";
 
-            return Path.Combine($"{host}/{rootFolderName}/{productName}/{platform}", patchCfgFileName);
+            return CombineUrl($"{host}/{rootFolderName}/{productName}/{platform}", patchCfgFileName);
+        }
+
+        /// <summary>
+        /// 組合 URL (一律以正斜線作為分隔符)
+        /// <para> Path.Combine 於 Windows 會以反斜線作為分隔符，並不適用於組合 URL </para>
+        /// </summary>
+        /// <param name="baseUrl"></param>
+        /// <param name="relativePath"></param>
+        /// <returns></returns>
+        internal static string CombineUrl(string baseUrl, string relativePath)
+        {
+            if (string.IsNullOrEmpty(baseUrl))
+                return relativePath;
+            if (string.IsNullOrEmpty(relativePath))
+                return baseUrl;
+
+            // 已有結尾分隔符時直接串接 (與 Path.Combine 的行為一致)
+            char last = baseUrl[baseUrl.Length - 1];
+            if (last == '/' || last == '\\')
+                return baseUrl + relativePath;
+
+            return baseUrl + "/" + relativePath;
         }
 
         /// <summary>
         /// 取得 UnityWebRequest StreamingAssets 路徑 (OSX and iOS 需要 + file://)
+        /// <para> ※備註：macOS Editor 無論當前的 Build Target 為何 (ex: Android, WebGL)，皆需 + file:// </para>
         /// </summary>
         /// <returns></returns>
         public static string GetRequestStreamingAssetsPath()
         {
-#if UNITY_STANDALONE_OSX || UNITY_IOS
+#if UNITY_STANDALONE_OSX || UNITY_IOS || UNITY_EDITOR_OSX
             return $"file://{Application.streamingAssetsPath}";
 #else
             return Application.streamingAssetsPath;

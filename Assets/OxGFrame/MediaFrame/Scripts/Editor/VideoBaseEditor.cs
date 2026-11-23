@@ -1,5 +1,6 @@
 ﻿using Cysharp.Threading.Tasks;
 using OxGFrame.MediaFrame.VideoFrame;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Unity.Collections;
@@ -50,6 +51,7 @@ namespace OxGFrame.MediaFrame.Editor
         {
             // 關閉 Inspector 時，必須停止預覽
             this._StopPreviewVideo();
+            this._ReleaseCachedTexture();
         }
 
         public override void OnInspectorGUI()
@@ -735,6 +737,11 @@ namespace OxGFrame.MediaFrame.Editor
 
         #region AudioUtil for Preview
         /// <summary>
+        /// AudioUtil 方法的反射緩存 (Key 為方法名稱)
+        /// </summary>
+        private static readonly Dictionary<string, MethodInfo> _audioUtilMethods = new Dictionary<string, MethodInfo>();
+
+        /// <summary>
         /// 透過反射取得 UnityEditor.AudioUtil 的方法
         /// </summary>
         /// <param name="methodName"></param>
@@ -742,12 +749,20 @@ namespace OxGFrame.MediaFrame.Editor
         /// <returns></returns>
         private static MethodInfo _GetAudioUtilMethod(string methodName, System.Type[] argTypes = null)
         {
+            // 優先從緩存取得 (查無方法的結果也會緩存，避免每次 IMGUI 事件皆重複進行反射查找)
+            if (_audioUtilMethods.TryGetValue(methodName, out MethodInfo method))
+                return method;
+
             var audioUtilType = typeof(AudioImporter).Assembly.GetType("UnityEditor.AudioUtil");
-            if (audioUtilType == null)
-                return null;
-            if (argTypes == null)
-                return audioUtilType.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public);
-            return audioUtilType.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public, null, argTypes, null);
+            if (audioUtilType != null)
+            {
+                if (argTypes == null)
+                    method = audioUtilType.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public);
+                else
+                    method = audioUtilType.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public, null, argTypes, null);
+            }
+            _audioUtilMethods[methodName] = method;
+            return method;
         }
 
         /// <summary>
@@ -790,17 +805,44 @@ namespace OxGFrame.MediaFrame.Editor
         }
         #endregion
 
+        // 背景貼圖緩存
+        private Texture2D _cachedTexture = null;
+        private Color _cachedTextureColor;
+
         private Texture2D _Make2DTexture(int width, int height, Color col)
         {
+            // 相同規格的貼圖直接返回緩存 (避免每次 IMGUI 事件皆建立新的貼圖卻未被銷毀，造成貼圖持續洩漏)
+            if (this._cachedTexture != null &&
+                this._cachedTexture.width == width &&
+                this._cachedTexture.height == height &&
+                this._cachedTextureColor == col)
+                return this._cachedTexture;
+
+            this._ReleaseCachedTexture();
+
             Color[] pix = new Color[width * height];
             for (int i = 0; i < pix.Length; ++i)
             {
                 pix[i] = col;
             }
             Texture2D result = new Texture2D(width, height);
+            result.hideFlags = HideFlags.HideAndDontSave;
             result.SetPixels(pix);
             result.Apply();
+
+            this._cachedTexture = result;
+            this._cachedTextureColor = col;
             return result;
+        }
+
+        /// <summary>
+        /// 銷毀緩存的背景貼圖 (HideAndDontSave 的貼圖需自行銷毀)
+        /// </summary>
+        private void _ReleaseCachedTexture()
+        {
+            if (this._cachedTexture != null)
+                DestroyImmediate(this._cachedTexture);
+            this._cachedTexture = null;
         }
     }
 }

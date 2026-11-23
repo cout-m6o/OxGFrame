@@ -28,6 +28,7 @@ namespace OxGFrame.NetFrame
         protected INetTips _netTips = null;                              // UI/UX interface for displaying network status tips
 
         private bool _isCloseForce = false;                              // Flag to indicate if the connection was closed intentionally
+        private bool _isDisposed = false;                                // Flag to indicate if the node has been disposed
 
         protected RealTimer _heartBeatTicker = null;                      // Cyclic timer for sending heartbeats
         private float _heartBeatTick = 10f;                              // Heartbeat interval in seconds (Default: 10s)
@@ -126,13 +127,21 @@ namespace OxGFrame.NetFrame
                 return;
             }
 
+            // 需先檢查 NetOption，避免狀態已切換為 CONNECTING 卻無法建立連線，導致後續的 Connect 皆被忽略
+            if (netOption == null)
+            {
+                Logging.PrintError<Logger>("NetOption cannot be null. Connection failed.");
+                return;
+            }
+
             if (this._netStatus == NetStatus.DISCONNECTED ||
                 this._netStatus == NetStatus.RECONNECTING)
             {
                 this._NetStatusHandler(NetStatus.CONNECTING, null);
                 this._netOption = netOption;
                 this._connectingHandler?.Invoke();
-                this._netProvider.CreateConnect(netOption);
+                // 防護於上述回調中釋放節點的情況
+                this._netProvider?.CreateConnect(netOption);
             }
         }
 
@@ -176,15 +185,36 @@ namespace OxGFrame.NetFrame
         /// </summary>
         internal void OnUpdate()
         {
+            // 節點可能於任一回調中被釋放 (ex: 於回應處理、心跳或逾時的回調中移除節點)
+            // 每個步驟皆需檢查，避免繼續存取已被釋放的計時器而拋出異常 (異常會導致整個 Updater 停止運作)
+            if (this._isDisposed)
+                return;
             this._netProvider?.OnUpdate();
+
+            if (this._isDisposed)
+                return;
             this._ProcessOutReceive();
+
+            if (this._isDisposed)
+                return;
             this._ProcessHeartBeat();
+
+            if (this._isDisposed)
+                return;
             this._ProcessAutoReconnect();
         }
 
         private void _OnOpen(object payload)
         {
+            // 節點已被釋放時，不需再處理後續才收到的事件
+            if (this._isDisposed)
+                return;
+
             this._NetStatusHandler(NetStatus.CONNECTED, payload);
+
+            // 防護於上述回調中釋放節點的情況
+            if (this._isDisposed)
+                return;
 
             this._isCloseForce = false;
             this._ResetAutoReconnect();
@@ -195,27 +225,46 @@ namespace OxGFrame.NetFrame
 
         private void _OnBinary(byte[] binary)
         {
+            // 節點已被釋放時，不需再處理後續才收到的事件
+            if (this._isDisposed)
+                return;
+
             this._ResetOutReceiveTicker();
             this._responseBinaryHandler?.Invoke(binary);
         }
 
         private void _OnMessage(string text)
         {
+            // 節點已被釋放時，不需再處理後續才收到的事件
+            if (this._isDisposed)
+                return;
+
             this._ResetOutReceiveTicker();
             this._responseMessageHandler?.Invoke(text);
         }
 
         private void _OnError(object payload)
         {
+            // 節點已被釋放時，不需再處理後續才收到的事件
+            if (this._isDisposed)
+                return;
+
             this._NetStatusHandler(NetStatus.CONNECTION_ERROR, payload);
         }
 
         private void _OnClose(object payload)
         {
+            // 節點已被釋放時，不需再處理後續才收到的事件
+            if (this._isDisposed)
+                return;
+
             this._NetStatusHandler(NetStatus.DISCONNECTED, payload);
 
             this._StopTicker();
             if (this._isCloseForce)
+                return;
+            // 防護於上述回調中釋放節點的情況
+            if (this._isDisposed)
                 return;
             this._StartAutoReconnect();
         }
@@ -408,6 +457,11 @@ namespace OxGFrame.NetFrame
         {
             this._NetStatusHandler(NetStatus.RECONNECTING, null);
 
+            // 防護於上述回調中釋放節點的情況
+            if (this._isDisposed ||
+                this._reconnectTicker == null)
+                return;
+
             this._reconnectTicker.Play();
             this._reconnectTicker.SetTick(this._reconnectTick);
         }
@@ -422,7 +476,9 @@ namespace OxGFrame.NetFrame
             if (this._reconnectTicker.IsPause())
                 return;
 
-            if (this._IsAutoReconnect() &&
+            // 等待重連期間已被手動關閉時 (Close)，不可再進行自動重連
+            if (!this._isCloseForce &&
+                this._IsAutoReconnect() &&
                 this._netStatus == NetStatus.RECONNECTING)
             {
                 if (this._reconnectTicker.IsTickTimeout())
@@ -440,7 +496,8 @@ namespace OxGFrame.NetFrame
             else
             {
                 this._NetStatusHandler(NetStatus.DISCONNECTED, null);
-                this._reconnectTicker.Stop();
+                // 防護於上述回調中釋放節點的情況 (ex: 於 OnDisconnected 中移除節點)
+                this._reconnectTicker?.Stop();
             }
         }
         #endregion
@@ -460,8 +517,15 @@ namespace OxGFrame.NetFrame
         /// </summary>
         public void Dispose()
         {
-            if (this._netProvider != null && !this._isCloseForce)
+            // 釋放時視同手動關閉，避免關閉事件觸發自動重連 (釋放後計時器皆已被清空，自動重連會造成空引用異常)
+            bool isCloseForce = this._isCloseForce;
+            this._isCloseForce = true;
+
+            if (this._netProvider != null && !isCloseForce)
                 this._netProvider.Close();
+
+            // 需在關閉之後才標記，確保關閉當下同步觸發的關閉事件仍可正常通知 (ex: KCP)
+            this._isDisposed = true;
 
             this._netProvider = null;
             this._netTips = null;

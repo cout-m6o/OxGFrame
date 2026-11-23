@@ -4,6 +4,7 @@ using OxGKit.LoggingSystem;
 using OxGKit.SaverSystem;
 using OxGKit.Utilities.Requester;
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using UnityEngine;
 using UnityEngine.Video;
@@ -40,7 +41,10 @@ namespace OxGFrame.MediaFrame
             public string fullPathName = MediaConfig.MEDIA_URL_CFG_NAME;
 
             #region Get UrlConfig File Content
-            private static string _urlCfgContent = null;
+            /// <summary>
+            /// 已請求過的 UrlCfg 文件內容緩存 (以請求路徑作為 key，避免不同的 UrlCfg 文件取得相同的內容)
+            /// </summary>
+            private static readonly Dictionary<string, string> _urlCfgContents = new Dictionary<string, string>();
             public async UniTask<string> GetFileText()
             {
                 switch (this.requestType)
@@ -51,9 +55,13 @@ namespace OxGFrame.MediaFrame
 
                     case RequestType.StreamingAssets:
                         string pathName = System.IO.Path.Combine(GetRequestStreamingAssetsPath(), this.fullPathName);
-                        if (string.IsNullOrEmpty(_urlCfgContent))
-                            _urlCfgContent = await Requester.RequestText(pathName, null, null, null, false);
-                        return _urlCfgContent;
+                        if (!_urlCfgContents.TryGetValue(pathName, out string urlCfgContent) ||
+                            string.IsNullOrEmpty(urlCfgContent))
+                        {
+                            urlCfgContent = await Requester.RequestText(pathName, null, null, null, false);
+                            _urlCfgContents[pathName] = urlCfgContent;
+                        }
+                        return urlCfgContent;
                 }
 
                 return null;
@@ -177,7 +185,9 @@ namespace OxGFrame.MediaFrame
                 string name = $"{nameof(this.monoDrive)}_{this.name}";
                 this.SetNames(name, name);
                 bool isInitialized = await this.Init();
-                if (!isInitialized)
+                // 初始期間物件已被銷毀時，不需再進行銷毀 (避免存取已銷毀的物件而拋出異常)
+                if (!isInitialized &&
+                    this != null)
                 {
                     Destroy(this.gameObject);
                 }
@@ -190,22 +200,31 @@ namespace OxGFrame.MediaFrame
             {
                 if (this.autoPlay)
                 {
-                    var cts = new CancellationTokenSource();
-                    cts.CancelAfterSlim(TimeSpan.FromSeconds(this.maxPrepareTimeSeconds <= 0 ? MAX_PREPARE_TIME_SECONDS : this.maxPrepareTimeSeconds));
-                    try
+                    // 等待結束後需釋放計時器與 CTS，避免殘留持續計時至逾時的 PlayerLoopTimer
+                    using (var cts = new CancellationTokenSource())
+                    using (cts.CancelAfterSlim(TimeSpan.FromSeconds(this.maxPrepareTimeSeconds <= 0 ? MAX_PREPARE_TIME_SECONDS : this.maxPrepareTimeSeconds), GetPrepareTimeoutDelayType()))
                     {
-                        do
+                        try
                         {
-                            if (this.isPrepared)
-                                break;
-                            // load balancing
-                            await UniTask.Yield(PlayerLoopTiming.FixedUpdate, cts.Token);
-                        } while (true);
-                    }
-                    catch (OperationCanceledException ex)
-                    {
-                        Logging.PrintException<Logger>(ex);
-                        Destroy(this.gameObject);
+                            do
+                            {
+                                // 等待期間物件已被銷毀時 (ex: 初始失敗)，直接結束等待
+                                if (this == null)
+                                    return;
+                                if (this.isPrepared)
+                                    break;
+                                // load balancing (需使用 Update 輪詢，TimeScale 為 0 時不會調用 FixedUpdate，會導致該期間無法完成等待)
+                                await UniTask.Yield(PlayerLoopTiming.Update, cts.Token);
+                            } while (true);
+                        }
+                        catch (OperationCanceledException ex)
+                        {
+                            Logging.PrintException<Logger>(ex);
+                            // 準備逾時，銷毀後不可再進行播放
+                            if (this != null)
+                                Destroy(this.gameObject);
+                            return;
+                        }
                     }
 
                     // Wait until is prepared to play
@@ -223,10 +242,64 @@ namespace OxGFrame.MediaFrame
         {
             if (!this._isInit)
                 return;
+            // 播放器因 AudioListener.pause 而停住時，不可進行刷新，避免尚未播放完畢就被判定為播放結束
+            if (this.IsPlayerPausedByAudioListener())
+                return;
             this.OnFixedUpdate(dt);
         }
 
+        /// <summary>
+        /// 返回播放器是否因 AudioListener.pause 而停住 (子類實作)
+        /// </summary>
+        /// <returns></returns>
+        internal virtual bool IsPlayerPausedByAudioListener() { return false; }
+
+        /// <summary>
+        /// 處理 TimeScale 為 0 時的刷新 (TimeScale 為 0 時不會調用 FixedUpdate，因此該期間改由 Update 驅動)
+        /// </summary>
+        /// <param name="dt"></param>
+        internal void HandleZeroTimeScaleUpdate(float dt)
+        {
+            // 受 TimeScale 影響的影音，於 TimeScale 為 0 時不進行刷新 (與使用 fixedDeltaTime 刷新的結果一致)
+            if (!this.ignoreTimeScale)
+                return;
+            // 播放器本身並未持續播放時 (ex: AudioListener.pause)，不可進行刷新，避免尚未播放完畢就被判定為播放結束
+            if (!this.IsPlayerAdvancingAtZeroTimeScale())
+                return;
+            this.HandleFixedUpdate(dt);
+        }
+
+        /// <summary>
+        /// 返回 TimeScale 為 0 時，播放器是否仍持續播放 (子類實作)
+        /// </summary>
+        /// <returns></returns>
+        internal virtual bool IsPlayerAdvancingAtZeroTimeScale() { return false; }
+
         #region For MonoDrive
+        /// <summary>
+        /// TimeScale 為 0 期間的刷新計時 (僅用於 MonoDrive 的自驅動)
+        /// </summary>
+        private ZeroTimeScaleTimer _zeroTimeScaleTimer;
+
+        /// <summary>
+        /// MonoDrive 自驅動的 FixedUpdate 刷新
+        /// </summary>
+        internal void HandleSelfFixedUpdate()
+        {
+            // 需於每次 FixedUpdate 取得 (恢復 TimeScale 後，會扣除 TimeScale 為 0 期間已由 Update 刷新的時間)
+            float fixedUnscaledDeltaTime = this._zeroTimeScaleTimer.GetFixedUnscaledDeltaTime();
+            this.HandleFixedUpdate(this.ignoreTimeScale ? fixedUnscaledDeltaTime : Time.fixedDeltaTime);
+        }
+
+        /// <summary>
+        /// MonoDrive 自驅動的 Update 刷新 (僅於 TimeScale 為 0 時進行刷新，其餘皆由 FixedUpdate 刷新)
+        /// </summary>
+        internal void HandleSelfUpdate()
+        {
+            if (this._zeroTimeScaleTimer.TryGetUpdateDeltaTime(out float dt))
+                this.HandleZeroTimeScaleUpdate(dt);
+        }
+
         /// <summary>
         /// Drive by self MonoBehaviour FixedUpdate
         /// </summary>
@@ -404,6 +477,16 @@ namespace OxGFrame.MediaFrame
             this.mediaName = mediaName;
         }
 
+        /// <summary>
+        /// 取得準備逾時的計時類型
+        /// <para> ※備註：TimeScale 為 0 時 deltaTime 恆為 0 (計時器永遠不會逾時)，因此該情況改以 unscaledDeltaTime 計時，其餘情況維持以 deltaTime 計時 </para>
+        /// </summary>
+        /// <returns></returns>
+        internal static DelayType GetPrepareTimeoutDelayType()
+        {
+            return (Time.timeScale == 0f) ? DelayType.UnscaledDeltaTime : DelayType.DeltaTime;
+        }
+
         #region MEDIA_URL 請求
         public const string VIDEO_URLSET = "video_urlset";
         public const string AUDIO_URLSET = "audio_urlset";
@@ -420,16 +503,76 @@ namespace OxGFrame.MediaFrame
 
         /// <summary>
         /// 取得 UnityWebRequest StreamingAssets 路徑 (OSX and iOS 需要 + file://)
+        /// <para> ※備註：macOS Editor 無論當前的 Build Target 為何 (ex: Android, WebGL)，皆需 + file:// </para>
         /// </summary>
         /// <returns></returns>
         internal static string GetRequestStreamingAssetsPath()
         {
-#if UNITY_STANDALONE_OSX || UNITY_IOS
+#if UNITY_STANDALONE_OSX || UNITY_IOS || UNITY_EDITOR_OSX
             return $"file://{Application.streamingAssetsPath}";
 #else
             return Application.streamingAssetsPath;
 #endif
         }
         #endregion
+    }
+
+    /// <summary>
+    /// TimeScale 為 0 期間的刷新計時
+    /// <para> ※備註：TimeScale 為 0 時不會調用 FixedUpdate，因此該期間改由 Update 以 unscaledDeltaTime 進行刷新。而恢復 TimeScale 後，首次 FixedUpdate 的 fixedUnscaledDeltaTime 會一次補上整段期間的時間，需扣除已由 Update 刷新的部分，避免重複計時 </para>
+    /// </summary>
+    internal struct ZeroTimeScaleTimer
+    {
+        /// <summary>
+        /// 最後一次調用 FixedUpdate 的幀數
+        /// </summary>
+        private int _lastFixedUpdateFrame;
+
+        /// <summary>
+        /// TimeScale 為 0 期間已由 Update 刷新的累計時間 (尚未扣除的部分)
+        /// </summary>
+        private double _elapsed;
+
+        /// <summary>
+        /// 於 FixedUpdate 調用，返回不受 TimeScale 影響的 DeltaTime (TimeScale 不曾為 0 時，等同 fixedUnscaledDeltaTime)
+        /// </summary>
+        /// <returns></returns>
+        public float GetFixedUnscaledDeltaTime()
+        {
+            this._lastFixedUpdateFrame = Time.frameCount;
+
+            float fixedUnscaledDeltaTime = Time.fixedUnscaledDeltaTime;
+            if (this._elapsed > 0d)
+            {
+                // 扣除 TimeScale 為 0 期間已由 Update 刷新的時間 (最多扣至 0)
+                fixedUnscaledDeltaTime -= Mathf.Min(fixedUnscaledDeltaTime, (float)this._elapsed);
+                this._elapsed = 0d;
+            }
+
+            return fixedUnscaledDeltaTime;
+        }
+
+        /// <summary>
+        /// 於 Update 調用，返回是否需進行刷新 (僅 TimeScale 為 0 時才需要)，並取得該幀的 DeltaTime
+        /// </summary>
+        /// <param name="dt"></param>
+        /// <returns></returns>
+        public bool TryGetUpdateDeltaTime(out float dt)
+        {
+            dt = 0f;
+
+            // TimeScale 不為 0 時，維持由 FixedUpdate 進行刷新
+            if (Time.timeScale != 0f)
+                return false;
+
+            // 同一幀已由 FixedUpdate 刷新過時 (表示 TimeScale 於該幀才被設置為 0)，不需重複刷新
+            if (Time.frameCount == this._lastFixedUpdateFrame)
+                return false;
+
+            dt = Time.unscaledDeltaTime;
+            this._elapsed += dt;
+
+            return true;
+        }
     }
 }

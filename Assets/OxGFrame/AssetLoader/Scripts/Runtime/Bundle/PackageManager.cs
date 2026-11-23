@@ -830,6 +830,13 @@ namespace OxGFrame.AssetLoader.Bundle
         public static async UniTask<bool> UpdatePackage(string packageName)
         {
             var package = GetPackage(packageName);
+            // 包裹尚未註冊時直接返回失敗，避免後續空引用
+            if (package == null)
+            {
+                Logging.PrintError<Logger>($"Package: {packageName} update failed. Cannot find the package (not registered yet).");
+                return false;
+            }
+
             var versionOperation = package.RequestPackageVersionAsync();
             await versionOperation;
             if (versionOperation.Status.IsSucceed())
@@ -921,7 +928,8 @@ namespace OxGFrame.AssetLoader.Bundle
                     return false;
 
                 DirectoryInfo directoryInfo = new DirectoryInfo(path);
-                return directoryInfo.GetFiles("*.*", SearchOption.AllDirectories).Any();
+                // 使用 EnumerateFiles 於找到第一個檔案時即可返回，避免完整列舉整個目錄樹
+                return directoryInfo.EnumerateFiles("*.*", SearchOption.AllDirectories).Any();
             }
             catch
             {
@@ -953,7 +961,8 @@ namespace OxGFrame.AssetLoader.Bundle
                     return 0;
 
                 DirectoryInfo directoryInfo = new DirectoryInfo(path);
-                return (ulong)directoryInfo.GetFiles("*.*", SearchOption.AllDirectories).Sum(fi => fi.Length);
+                // 使用 EnumerateFiles 逐一累加，避免一次配置完整的檔案清單陣列
+                return (ulong)directoryInfo.EnumerateFiles("*.*", SearchOption.AllDirectories).Sum(fi => fi.Length);
             }
             catch
             {
@@ -1056,11 +1065,19 @@ namespace OxGFrame.AssetLoader.Bundle
                 return true;
 
             // Destroy package from cache memory
-            await package.DestroyAsync();
 #if YOOASSET_2
+            await package.DestroyAsync();
             return YooAssets.RemovePackage(package);
 #else
             // [YooAsset v3] RemovePackage 改以名稱移除 (無回傳值)
+            // 注意：v3 對尚未成功銷毀的包裹執行 RemovePackage 會拋出例外 (v2 僅回傳 false)，因此先檢查銷毀結果以對齊 v2 行為
+            var destroyOperation = package.DestroyAsync();
+            await destroyOperation;
+            if (!destroyOperation.Status.IsSucceed())
+            {
+                Logging.PrintError<Logger>($"Package: {package.PackageName} destroy failed, cannot be removed. Error: {destroyOperation.Error}");
+                return false;
+            }
             YooAssets.RemovePackage(package.PackageName);
             return true;
 #endif
@@ -1237,6 +1254,9 @@ namespace OxGFrame.AssetLoader.Bundle
             return YooAssets.GetAllPackages().ToArray();
 #else
             // [YooAsset v3] GetAllPackages 更名為 GetPackages
+            // 注意：v3 於尚未初始化時會拋出例外 (v2 則回傳空清單)，因此先行判斷以對齊 v2 行為
+            if (!YooAssets.IsInitialized)
+                return new ResourcePackage[] { };
             return YooAssets.GetPackages().ToArray();
 #endif
         }
@@ -1499,11 +1519,20 @@ namespace OxGFrame.AssetLoader.Bundle
                 }
 #else
                 // [YooAsset v3] GetAllPackages 更名為 GetPackages; RemovePackage 改以名稱移除
-                var packages = YooAssets.GetPackages().ToArray();
-                foreach (var package in packages)
+                // 注意：v3 於尚未初始化時取得包裹清單會拋出例外 (v2 則回傳空清單)，因此先行判斷以對齊 v2 行為
+                if (YooAssets.IsInitialized)
                 {
-                    await package.DestroyAsync();
-                    YooAssets.RemovePackage(package.PackageName);
+                    var packages = YooAssets.GetPackages().ToArray();
+                    foreach (var package in packages)
+                    {
+                        var destroyOperation = package.DestroyAsync();
+                        await destroyOperation;
+                        // v3 對尚未成功銷毀的包裹執行 RemovePackage 會拋出例外 (v2 僅回傳 false)，銷毀失敗時略過移除，交由後續的強制銷毀處理
+                        if (destroyOperation.Status.IsSucceed())
+                            YooAssets.RemovePackage(package.PackageName);
+                        else
+                            Logging.PrintWarning<Logger>($"Package: {package.PackageName} destroy failed, skipped removing. Error: {destroyOperation.Error}");
+                    }
                 }
 #endif
 

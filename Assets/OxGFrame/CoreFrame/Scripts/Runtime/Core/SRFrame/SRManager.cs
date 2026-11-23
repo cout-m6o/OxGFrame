@@ -54,6 +54,28 @@ namespace OxGFrame.CoreFrame.SRFrame
                 sourceComponent.monoDrive = false;
             }
 
+            try
+            {
+                return this._InstantiateCore(sourceComponent, assetName, addIntoCache, parent);
+            }
+            finally
+            {
+                // 還原來源設置 (包含提前返回或流程拋出異常的情況，避免來源預製體的 monoDrive 未被還原)
+                if (sourceMonoDriveFlag)
+                    sourceComponent.monoDrive = true;
+            }
+        }
+
+        /// <summary>
+        /// 實例化的實際流程 (來源組件的 monoDrive 還原統一由 Instantiate 負責)
+        /// </summary>
+        /// <param name="sourceComponent"></param>
+        /// <param name="assetName"></param>
+        /// <param name="addIntoCache"></param>
+        /// <param name="parent"></param>
+        /// <returns></returns>
+        private SRBase _InstantiateCore(SRBase sourceComponent, string assetName, AddIntoCache addIntoCache, Transform parent)
+        {
             GameObject instGo = Instantiate(sourceComponent.gameObject, (parent != null) ? parent : this.transform);
 
             // 激活檢查，如果主體 Active 為 false 必須打開
@@ -63,7 +85,7 @@ namespace OxGFrame.CoreFrame.SRFrame
             // Replace Name
             instGo.name = instGo.name.Replace("(Clone)", "");
             // 取得 SRBase 組件
-            srBase = instGo.GetComponent<SRBase>();
+            SRBase srBase = instGo.GetComponent<SRBase>();
             if (srBase == null)
                 return null;
 
@@ -84,10 +106,6 @@ namespace OxGFrame.CoreFrame.SRFrame
 
             // 最後設置完畢後，關閉 GameObject 的 Active 為 false
             srBase.gameObject.SetActive(false);
-
-            // 還原來源設置
-            if (sourceMonoDriveFlag)
-                sourceComponent.monoDrive = true;
 
             return srBase;
         }
@@ -138,23 +156,36 @@ namespace OxGFrame.CoreFrame.SRFrame
             if (!string.IsNullOrEmpty(awaitingUIAssetName))
                 await this.ShowAwaiting(groupId, packageName, awaitingUIAssetName, awaitingUIExtraDuration, priority);
 
-            var srBase = await this.LoadIntoAllCache(packageName, assetName, priority, progression, false, parent);
-            if (srBase == null)
+            // 是否由本次調用負責關閉預顯加載 UI
+            bool closeAwaiting = true;
+
+            try
             {
-                Logging.PrintError<Logger>($"SR -> Asset not found at path or name: {assetName}");
-                return null;
+                var srBase = await this.LoadIntoAllCache(packageName, assetName, priority, progression, false, parent);
+                if (srBase == null)
+                {
+                    // 如果該資源仍在加載中 (由另一次調用發起)，預顯加載 UI 交由該次調用於完成時關閉
+                    if (this.HasInLoadingFlags(assetName))
+                        closeAwaiting = false;
+
+                    Logging.PrintError<Logger>($"SR -> Asset not found at path or name: {assetName}");
+                    return null;
+                }
+
+                srBase.SetGroupId(groupId);
+                srBase.SetHidden(false);
+                await this.LoadAndDisplay(srBase, obj);
+
+                Logging.PrintInfo<Logger>($"Show SR: {assetName}");
+
+                return srBase;
             }
-
-            srBase.SetGroupId(groupId);
-            srBase.SetHidden(false);
-            await this.LoadAndDisplay(srBase, obj);
-
-            Logging.PrintInfo<Logger>($"Show SR: {assetName}");
-
-            // 執行完畢後，關閉預顯加載 UI
-            this.CloseAwaiting(awaitingUIAssetName);
-
-            return srBase;
+            finally
+            {
+                // 執行完畢後，關閉預顯加載 UI (包含加載失敗或流程拋出異常的情況，避免預顯加載 UI 殘留於畫面上)
+                if (closeAwaiting)
+                    this.CloseAwaiting(awaitingUIAssetName);
+            }
         }
         #endregion
 
@@ -239,7 +270,7 @@ namespace OxGFrame.CoreFrame.SRFrame
 
                 // 檢查排除執行的 SR
                 bool checkWithout = false;
-                if (withoutAssetNames.Length > 0)
+                if (withoutAssetNames != null && withoutAssetNames.Length > 0)
                 {
                     for (int i = 0; i < withoutAssetNames.Length; i++)
                     {
@@ -288,7 +319,8 @@ namespace OxGFrame.CoreFrame.SRFrame
             }
 
             FrameStack<SRBase> stack = this.GetStackFromAllCache(assetName);
-            foreach (var srBase in stack.cache)
+            // 需要注意緩存需要 temp 出來，因為回調中若關閉或銷毀物件會直接對緩存進行操作而出錯
+            foreach (var srBase in stack.cache.ToArray())
             {
                 if (!srBase.isHidden)
                     return;
@@ -348,7 +380,8 @@ namespace OxGFrame.CoreFrame.SRFrame
             if (!this.CheckIsShowing(stack.Peek()))
                 return;
 
-            foreach (var srBase in stack.cache)
+            // 需要注意緩存需要 temp 出來，因為回調中若關閉或銷毀物件會直接對緩存進行操作而出錯
+            foreach (var srBase in stack.cache.ToArray())
             {
                 srBase.SetHidden(true);
                 this.ExitAndHide(srBase);
@@ -384,7 +417,7 @@ namespace OxGFrame.CoreFrame.SRFrame
 
                 // 檢查排除執行的 SR
                 bool checkWithout = false;
-                if (withoutAssetNames.Length > 0)
+                if (withoutAssetNames != null && withoutAssetNames.Length > 0)
                 {
                     for (int i = 0; i < withoutAssetNames.Length; i++)
                     {

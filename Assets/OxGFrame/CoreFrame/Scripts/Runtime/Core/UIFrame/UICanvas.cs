@@ -67,15 +67,32 @@ namespace OxGFrame.CoreFrame.UIFrame
                 UIBase[] uiBases = this.gameObject.GetComponentsInChildren<UIBase>(true);
                 foreach (var uiBase in uiBases)
                 {
-                    UIManager.GetInstance().Close(uiBase.assetName, true, true);
+                    // 逐一防護，避免單一 UI 的關閉流程拋出異常時，中斷其餘 UI 的連動釋放
+                    try
+                    {
+                        UIManager.GetInstance().Close(uiBase.assetName, true, true);
+                    }
+                    catch
+                    {
+                        /* Nothing to do */
+                    }
                 }
-
-                // 釋放 UIManager 中的 UICanvas 緩存
-                UIManager.GetInstance().RemoveUICanvasFromCache(this.name);
             }
             catch
             {
                 /* Nothing to do */
+            }
+            finally
+            {
+                // 釋放 UIManager 中的 UICanvas 緩存 (無論上述流程是否發生異常皆需移除，避免殘留已銷毀的 UICanvas 參考)
+                try
+                {
+                    UIManager.GetInstance().RemoveUICanvasFromCache(this.name);
+                }
+                catch
+                {
+                    /* Nothing to do */
+                }
             }
         }
     }

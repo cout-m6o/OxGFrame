@@ -1,5 +1,153 @@
 # CHANGELOG
 
+## [3.7.1] - 2026-11-24
+
+# English
+
+- AssetLoader
+  - ### Fixes
+    - Fixed failed loads being cached, and overlapping `Preload` / `Load` of the same asset throwing an exception.
+    - Fixed the patch flow stalling silently when a config request fails, and host URLs being built with backslashes on Windows.
+    - Fixed StreamingAssets requests missing the `file://` prefix in the macOS Editor when the build target is not macOS or iOS (also in MediaFrame and Hotfixer).
+    - Fixed editor windows losing their settings after a domain reload (also in MediaFrame, Hotfixer and the BuildTool sample).
+  - ### Adjustments
+    - YooAsset 3.x verification range extended to 3.0.7.
+
+- CoreFrame
+  - ### Fixes
+    - Fixed StackByStack no longer recording after its list became empty, and the awaiting UI staying open when `Show` fails.
+    - Fixed `UIFrame.Show` ignoring the `parent` argument.
+    - Fixed a Reverse-mode UI being closed by its own reverse flow when shown again after `Hide`, and `InvalidOperationException` when a callback closes a frame during `SendRefreshData`, `Hide` or `Reveal`.
+    - Fixed CS0121 ambiguity on the simplest `CoreFrames.USFrame` scene calls.
+    - Fixed the code binding generator inserting `using` at the wrong position, rewriting line endings, and not adding the `using` that attribute marks need (e.g. `[hi]`).
+    - Fixed `Show` with `awaitingUIExtraDuration` never completing while `Time.timeScale` is 0.
+  - ### Adjustments
+    - The code binding generator now warns about nodes whose bind prefix does not match the script type (`_` for UI / SR, `~` for CP).
+    - The code binding generator no longer writes to scripts that are not UTF-8 encoded, to avoid corrupting them (the API Updater likewise).
+
+- MediaFrame
+  - ### Fixes
+    - Fixed media being unable to start while `Time.timeScale` is 0, and `ignoreTimeScale` media not ending or looping during that time.
+    - Fixed `ignoreTimeScale` media being cut off right after `Time.timeScale` returns from 0 (played on resume, or frozen by `AudioListener.pause`).
+    - Fixed media being ended early while `AudioListener.pause` freezes them (audio, and video on the DSP time clock).
+    - Fixed `Play` ignoring `loops` / `volume` when it replays or resumes an existing instance, and a kept video rendering into a released RenderTexture when replayed.
+    - Fixed infinite recursion when an end event stops the same media, and concurrent first-time `Play` returning null.
+    - Fixed an instance destroyed during initialization blocking all later updates.
+    - Fixed the internal LRU eviction stopping all playing media.
+
+- NetFrame
+  - ### Fixes
+    - Fixed removing a node inside its own callback stopping the whole updater.
+    - Fixed auto-reconnect continuing after a manual `Close`, and TCP manual `Close` leaving the node stuck in `CONNECTED`.
+    - Fixed the TCP node reporting a remote disconnect twice.
+
+- CenterFrame
+  - ### Fixes
+    - Fixed `ObjectDisposedException` being logged after each `Http.Acax` request (also in `StreamingAssetsHelper`).
+    - Fixed `HttpNativeWebRequest` failing on common headers such as `Accept` and `User-Agent`, and `HttpNativeClient` ignoring `timeoutSeconds` above 100 seconds.
+
+- GSIFrame
+  - ### Fixes
+    - Fixed a stage registered with id 0 not being enterable without `force`.
+
+- Hotfixer
+  - ### New Features
+    - Added HybridCLR 9.x support alongside 8.x (`HYBRIDCLR_9_OR_NEWER` is defined automatically; on 9.x the AOT dll list comes from the generated `PatchedAOTAssemblyList`). The BuildTool sample is updated as well.
+  - ### Optimization
+    - "Compile And Copy To HotfixCollector" now keeps the `.meta` files of the copied dlls.
+
+- Samples
+  - ### New Features
+    - Added YooAsset 3.x collector configs to the bundle demos (`*_AssetBundleCollectorConfig_YooAsset3.xml`); YooAsset 3.x cannot import the existing 2.x files.
+  - ### Fixes
+    - Fixed the BuildTool sample failing to export when the bundle map defines `groups`.
+    - Fixed the outdated config file / menu names in the HotfixerDemo messages.
+  - ### Adjustments
+    - Updated the AI Agent Skill for 3.7.1: agents must trigger the framework's editor tools (bind-code generator, templates, config exporters; Unity CLI first) instead of hand-writing their output; added `references/editor-tools.md`.
+
+- Other
+  - ### New Features
+    - Added Unity CLI support: the editor tools are available as `unity command oxgframe.*` commands when `com.unity.pipeline` 1.x is installed (Unity 6.0+), along with path-based editor entry points for automation.
+  - ### Optimization
+    - Reduced per-frame and per-GUI-event allocations (frame / net update loops, editor windows and inspectors).
+  - ### Fixes
+    - Fixed a number of edge cases across modules (state left behind after a failed load or close, invalid input in the editor tools, etc.).
+  - ### Adjustments
+    - Updated all repository links (package dependencies and documentation) to the new GitHub account `cout-m6o`.
+
+# 中文
+
+- AssetLoader
+  - ### 修正
+    - 修正加載失敗的資源被緩存，以及同一資源的 `Preload` / `Load` 重疊時拋出異常的問題。
+    - 修正配置請求失敗時補丁流程靜默卡住，以及 Windows 下 Host URL 被組成反斜線的問題。
+    - 修正 macOS Editor 於 Build Target 非 macOS 或 iOS 時，StreamingAssets 請求路徑缺少 `file://` 前綴的問題 (MediaFrame、Hotfixer 同步修正)。
+    - 修正編輯器視窗於 Domain Reload 後遺失設定的問題 (MediaFrame、Hotfixer、BuildTool sample 同步修正)。
+  - ### 調整
+    - YooAsset 3.x 的驗證範圍擴大至 3.0.7。
+
+- CoreFrame
+  - ### 修正
+    - 修正 StackByStack 的列表清空後不再記錄，以及 `Show` 失敗時 Awaiting UI 未被關閉的問題。
+    - 修正 `UIFrame.Show` 的 `parent` 參數未生效的問題。
+    - 修正 Reverse 模式的 UI 於 `Hide` 後再次顯示時被自身的反切流程關閉，以及於 `SendRefreshData`、`Hide`、`Reveal` 的回調中關閉物件時拋出 `InvalidOperationException` 的問題。
+    - 修正 `CoreFrames.USFrame` 場景 API 最精簡的調用形式產生 CS0121 歧義的問題。
+    - 修正代碼綁定產生器的 `using` 插入位置錯誤、換行符被改寫，以及未補上屬性標記 (如 `[hi]`) 所需 `using` 的問題。
+    - 修正 `Time.timeScale` 為 0 時，帶有 `awaitingUIExtraDuration` 的 `Show` 無法完成的問題。
+  - ### 調整
+    - 代碼綁定產生器會對綁定前綴與腳本類型不符的節點輸出警告 (UI / SR 為 `_`，CP 為 `~`)。
+    - 代碼綁定產生器不再寫入非 UTF-8 編碼的腳本，避免內容被損毀 (API Updater 同步調整)。
+
+- MediaFrame
+  - ### 修正
+    - 修正 `Time.timeScale` 為 0 時影音無法開始播放，以及啟用 `ignoreTimeScale` 的影音於該期間無法偵測播放結束與循環的問題。
+    - 修正 `Time.timeScale` 由 0 恢復後，啟用 `ignoreTimeScale` 的影音被立即中斷的問題 (恢復當下播放，或以 `AudioListener.pause` 凍結的影音)。
+    - 修正以 `AudioListener.pause` 凍結影音期間，影音被提前判定為播放結束的問題 (音訊，以及使用 DSP 時鐘的視訊)。
+    - 修正 `Play` 重新播放或恢復既有實例時 `loops` / `volume` 參數未生效，以及保留的 Video 重新播放時映射至已釋放 RenderTexture 的問題。
+    - 修正結束事件內停止相同影音時的無窮遞迴，以及首次併發 `Play` 返回 null 的問題。
+    - 修正初始期間被銷毀的物件導致後續影音不再刷新的問題。
+    - 修正內部 LRU 淘汰時停止所有播放中影音的問題。
+
+- NetFrame
+  - ### 修正
+    - 修正於節點自身的回調中移除節點，導致整個 Updater 停止的問題。
+    - 修正手動 `Close` 後仍持續自動重連，以及 TCP 手動 `Close` 後節點狀態停留在 `CONNECTED` 的問題。
+    - 修正 TCP 連線被遠端中斷時重複通知斷線的問題。
+
+- CenterFrame
+  - ### 修正
+    - 修正 `Http.Acax` 每次請求後輸出 `ObjectDisposedException` 的問題 (`StreamingAssetsHelper` 同步修正)。
+    - 修正 `HttpNativeWebRequest` 帶有 `Accept`、`User-Agent` 等常見標頭時請求失敗，以及 `HttpNativeClient` 的 `timeoutSeconds` 超過 100 秒時未生效的問題。
+
+- GSIFrame
+  - ### 修正
+    - 修正以 Id 0 註冊的 GameStage 未使用 `force` 便無法進入的問題。
+
+- Hotfixer
+  - ### 新功能
+    - 新增 HybridCLR 9.x 支援並維持相容 8.x (自動定義 `HYBRIDCLR_9_OR_NEWER`；9.x 的 AOT dll 清單取自生成的 `PatchedAOTAssemblyList`)，BuildTool sample 同步支援。
+  - ### 優化
+    - "Compile And Copy To HotfixCollector" 改為保留已複製 dll 的 `.meta`。
+
+- Samples
+  - ### 新功能
+    - Bundle 相關 Demo 新增 YooAsset 3.x 格式的 Collector 設定檔 (`*_AssetBundleCollectorConfig_YooAsset3.xml`)，YooAsset 3.x 無法匯入原有的 2.x 格式檔。
+  - ### 修正
+    - 修正 BuildTool sample 的 Bundle Map 定義 `groups` 時輸出失敗的問題。
+    - 修正 HotfixerDemo 提示訊息中過時的設定檔與選單名稱。
+  - ### 調整
+    - 更新 AI Agent Skill 至 3.7.1：要求 Agent 一律觸發框架的編輯器工具 (綁定代碼產生器、樣板、設定匯出；優先使用 Unity CLI)，不可自行撰寫等價內容，並新增 `references/editor-tools.md`。
+
+- 其他
+  - ### 新功能
+    - 新增 Unity CLI 支援：專案安裝 `com.unity.pipeline` 1.x 時 (Unity 6.0+)，編輯器工具可透過 `unity command oxgframe.*` 指令調用，並提供以路徑為參數的編輯器入口供自動化流程使用。
+  - ### 優化
+    - 降低每幀與每次 GUI 事件的配置量 (Frame / Net 的刷新流程、編輯器視窗與 Inspector)。
+  - ### 修正
+    - 修正各模組的多項邊界情況 (加載或關閉失敗後殘留的狀態、編輯器工具的無效輸入等)。
+  - ### 調整
+    - 所有 repository 連結 (套件相依與文件) 更新為新的 GitHub 帳號 `cout-m6o`。
+
 ## [3.7.0] - 2026-07-30
 
 # English
@@ -320,31 +468,31 @@
   - Added `package.json` to each module, allowing independent installation of modules via Git URL (please ensure correct dependency installation order).
     - AssetLoader
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/AssetLoader
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/AssetLoader
 	```
 	- CoreFrame (依賴 AssetLoader)
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/CoreFrame
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/CoreFrame
 	```
 	- MediaFrame (依賴 AssetLoader)
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/MediaFrame
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/MediaFrame
 	```
 	- Hotfixer (依賴 AssetLoader)
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/Hotfixer
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/Hotfixer
 	```
 	- GSIFrame
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/GSIFrame
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/GSIFrame
 	```
 	- CenterFrame
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/CenterFrame
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/CenterFrame
 	```
 	- NetFrame
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/NetFrame
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/NetFrame
 	```
 
 - ### Organized
@@ -365,31 +513,31 @@
   - 新增 package.json 至各模塊，可以獨立透過 git url 安裝各模塊 (需要確保依賴安裝順序)。
     - AssetLoader
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/AssetLoader
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/AssetLoader
 	```
 	- CoreFrame (依賴 AssetLoader)
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/CoreFrame
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/CoreFrame
 	```
 	- MediaFrame (依賴 AssetLoader)
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/MediaFrame
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/MediaFrame
 	```
 	- Hotfixer (依賴 AssetLoader)
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/Hotfixer
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/Hotfixer
 	```
 	- GSIFrame
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/GSIFrame
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/GSIFrame
 	```
 	- CenterFrame
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/CenterFrame
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/CenterFrame
 	```
 	- NetFrame
     ```
-	https://github.com/michael811125/OxGFrame.git?path=Assets/OxGFrame/NetFrame
+	https://github.com/cout-m6o/OxGFrame.git?path=Assets/OxGFrame/NetFrame
 	```
 
 - ### 整理
@@ -1051,13 +1199,13 @@ CustomPlayModeParameters
 
 # English
 
-- Organized all code logging outputs to remove RichText colorization and handle coloring exclusively via the [OxGKit.LoggingSystem](https://github.com/michael811125/OxGKit#loggingsystem-dependence-lwmybox) logger.
-  - Must upgrade OxGKit.LoggingSystem to [v1.3.1](https://github.com/michael811125/OxGKit/blob/master/Assets/OxGKit/LoggingSystem/Scripts/CHANGELOG.md).
+- Organized all code logging outputs to remove RichText colorization and handle coloring exclusively via the [OxGKit.LoggingSystem](https://github.com/cout-m6o/OxGKit#loggingsystem-dependence-lwmybox) logger.
+  - Must upgrade OxGKit.LoggingSystem to [v1.3.1](https://github.com/cout-m6o/OxGKit/blob/master/Assets/OxGKit/LoggingSystem/Scripts/CHANGELOG.md).
 
 # 中文
 
-- 整理所有代碼打印方式，移除 RichText 上色，統一由 [OxGKit.LoggingSystem](https://github.com/michael811125/OxGKit#loggingsystem-dependence-lwmybox) 日誌器實現上色。
- - 必須升級 OxGKit.LoggingSystem 至 [v1.3.1](https://github.com/michael811125/OxGKit/blob/master/Assets/OxGKit/LoggingSystem/Scripts/CHANGELOG.md)。
+- 整理所有代碼打印方式，移除 RichText 上色，統一由 [OxGKit.LoggingSystem](https://github.com/cout-m6o/OxGKit#loggingsystem-dependence-lwmybox) 日誌器實現上色。
+ - 必須升級 OxGKit.LoggingSystem 至 [v1.3.1](https://github.com/cout-m6o/OxGKit/blob/master/Assets/OxGKit/LoggingSystem/Scripts/CHANGELOG.md)。
 
 ## [3.4.6] - 2025-08-18
 
@@ -1303,7 +1451,7 @@ CustomPlayModeParameters
 # English
 
 - Added Dependency
-  - The Package Manager must install (Install via git URL): https://github.com/michael811125/OxGKit.git?path=Assets/OxGKit/SaverSystem/Scripts
+  - The Package Manager must install (Install via git URL): https://github.com/cout-m6o/OxGKit.git?path=Assets/OxGKit/SaverSystem/Scripts
 
 - AssetLoader
   - Added OXGFRAME_WEAK_HOST_MODE macro definition.
@@ -1321,7 +1469,7 @@ CustomPlayModeParameters
 # 中文
 
 - 新增依賴
-  - Package Manager (Install via git URL) 需安裝： https://github.com/michael811125/OxGKit.git?path=Assets/OxGKit/SaverSystem/Scripts
+  - Package Manager (Install via git URL) 需安裝： https://github.com/cout-m6o/OxGKit.git?path=Assets/OxGKit/SaverSystem/Scripts
 
 - AssetLoader
   - 新增 OXGFRAME_WEAK_HOST_MODE 宏定義。
@@ -1402,7 +1550,7 @@ CustomPlayModeParameters
 	- Fixed the IsPlaying() state to ensure it is set to false after Stop.
     - Fixed the IsPaused() state to ensure it is set to false after Stop.
 - Others
-  - [Macro Definitions wiki](https://github.com/michael811125/OxGFrame/wiki/Macro-Definitions)
+  - [Macro Definitions wiki](https://github.com/cout-m6o/OxGFrame/wiki/Macro-Definitions)
 
 ---
 
@@ -1436,7 +1584,7 @@ CustomPlayModeParameters
 	- 修正 IsPlaying() 狀態，必須在 Stop 之後設置為 false。
 	- 修正 IsPaused() 狀態，必須在 Stop 之後設置為 false。
 - Others
-  - [Macro Defitions wiki](https://github.com/michael811125/OxGFrame/wiki/Macro-Definitions)
+  - [Macro Defitions wiki](https://github.com/cout-m6o/OxGFrame/wiki/Macro-Definitions)
 
 ## [3.2.0] - 2025-03-26
 
@@ -1449,7 +1597,7 @@ CustomPlayModeParameters
   - Added support for OffsetXOR encryption/decryption - runtime passed.  
   - Added support for ChaCha20 Bundle encryption/decryption - runtime passed (Reference: [CSharp-ChaCha20-NetStandard](https://github.com/mcraiha/CSharp-ChaCha20-NetStandard/tree/netstandard20andnet6)).  
   - Added support for XXTEA Bundle encryption/decryption - runtime passed (Reference: [Razensoft.XXTEA](https://github.com/Razenpok/Razensoft.XXTEA/tree/master)).  
-  - Adjusted the error function of Requester in PatchFsmStates ([oxgkit.utilities v1.4.3 or higher](https://github.com/michael811125/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md)).  
+  - Adjusted the error function of Requester in PatchFsmStates ([oxgkit.utilities v1.4.3 or higher](https://github.com/cout-m6o/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md)).  
   - Optimized to significantly reduce GC overhead when retrieving decryption keys.  
   - Optimized DecryptionServices code for better maintainability.  
   - Optimized FileCryptogram code for better maintainability.  
@@ -1460,12 +1608,12 @@ CustomPlayModeParameters
   - Added parameters to the CloseSelf method: CloseSelf(bool disabledPreClose = false, bool forceDestroy = false).  
 - MediaFrame  
   - Added Tests (TODO).  
-  - Added MediaObjectRemoveCacheHandler (requires [oxgkit.utilities v1.4.5 or higher](https://github.com/michael811125/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md)).  
+  - Added MediaObjectRemoveCacheHandler (requires [oxgkit.utilities v1.4.5 or higher](https://github.com/cout-m6o/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md)).  
   - Removed MediaLRUCache.  
   - AudioFrame  
     - Added MaxRequestTimeSeconds (Timeout) configuration.  
     - Adjusted the Request method in AudioManager.  
-    - Removed the RequestAudio method and unified instance creation using Requester (requires [oxgkit.utilities v1.4.5 or higher](https://github.com/michael811125/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md)).  
+    - Removed the RequestAudio method and unified instance creation using Requester (requires [oxgkit.utilities v1.4.5 or higher](https://github.com/cout-m6o/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md)).  
   - VideoFrame  
     - Added MaxPrepareTimeSeconds (Timeout) configuration.  
     - Fixed an issue where SourceType.Url did not correctly set the source as VideoSource.Url.  
@@ -1490,7 +1638,7 @@ CustomPlayModeParameters
   - 新增支持 OffsetXOR 加解密 - runtime passed。
   - 新增支持 ChaCha20 Bundle 加解密 - runtime passed (Reference: [CSharp-ChaCha20-NetStandard](https://github.com/mcraiha/CSharp-ChaCha20-NetStandard/tree/netstandard20andnet6))。
   - 新增支持 XXTEA Bundle 加解密 - runtime passed (Reference: [Razensoft.XXTEA](https://github.com/Razenpok/Razensoft.XXTEA/tree/master))。
-  - 調整 PatchFsmStates 中 Requester 的 error function ([oxgkit.utilities v1.4.3 or higher](https://github.com/michael811125/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md))。
+  - 調整 PatchFsmStates 中 Requester 的 error function ([oxgkit.utilities v1.4.3 or higher](https://github.com/cout-m6o/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md))。
   - 優化大幅度減少獲取解密 Key 所產生的 GC。
   - 優化 DecryptionServices 代碼，提高維護性。
   - 優化 FileCryptogram 代碼，提高維護性。
@@ -1501,12 +1649,12 @@ CustomPlayModeParameters
   - 新增 CloseSelf(bool disabledPreClose = false, bool forceDestroy = false) 方法參數。
 - MediaFrame
   - 新增 Tests (TODO)。
-  - 新增 MediaObjectRemoveCacheHandler (依賴 [oxgkit.utilities v1.4.5 or higher](https://github.com/michael811125/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md))。
+  - 新增 MediaObjectRemoveCacheHandler (依賴 [oxgkit.utilities v1.4.5 or higher](https://github.com/cout-m6o/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md))。
   - 移除 MediaLRUCache。
   - AudioFrame
     - 新增 MaxRequestTimeSeconds (Timeout) 配置。
 	- 調整 AudioManager Request 方法。
-	- 移除 RequestAudio 方法，統一使用 Requester 進行實例 (依賴 [oxgkit.utilities v1.4.5 or higher](https://github.com/michael811125/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md))。
+	- 移除 RequestAudio 方法，統一使用 Requester 進行實例 (依賴 [oxgkit.utilities v1.4.5 or higher](https://github.com/cout-m6o/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md))。
   - VideoFrame
     - 新增 MaxPrepareTimeSeconds (Timeout) 配置。
 	- 修正 SourceType.Url 沒有正確指定 source 為 VideoSource.Url 的問題。
@@ -1537,12 +1685,12 @@ CustomPlayModeParameters
 ## [3.1.2] - 2025-03-19
 
 # English
-- Organized and adjusted OxGKit plugin dependencies (see [OxGKit.Utilities v1.4.0](https://github.com/michael811125/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md)).
+- Organized and adjusted OxGKit plugin dependencies (see [OxGKit.Utilities v1.4.0](https://github.com/cout-m6o/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md)).
 
 ---
 
 # 中文
-- 整理並調整 OxGKit 插件依賴性 (查看 [OxGKit.Utilities v1.4.0](https://github.com/michael811125/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md))。
+- 整理並調整 OxGKit 插件依賴性 (查看 [OxGKit.Utilities v1.4.0](https://github.com/cout-m6o/OxGKit/blob/master/Assets/OxGKit/Utilities/Scripts/CHANGELOG.md))。
 
 ## [3.1.1] - 2025-03-18
 
@@ -1558,7 +1706,7 @@ CustomPlayModeParameters
 
 # English
 
-Fixed StreamingAssetsHelper 404 request error in [v3.1.1](https://github.com/michael811125/OxGFrame/releases/tag/v3.1.1).
+Fixed StreamingAssetsHelper 404 request error in [v3.1.1](https://github.com/cout-m6o/OxGFrame/releases/tag/v3.1.1).
 
 - Modified StreamingAssetsHelper to dynamically detect built-in resources (by checking if the BuildinCatalog.bytes file exists in the Package folder, indicating that the package is present).
 - Modified the code in YooAssetBridge.
@@ -1569,7 +1717,7 @@ Fixed StreamingAssetsHelper 404 request error in [v3.1.1](https://github.com/mic
 
 # 中文
 
-修正 StreamginAssetsHelper 404 請求錯誤於 [v3.1.1](https://github.com/michael811125/OxGFrame/releases/tag/v3.1.1)。
+修正 StreamginAssetsHelper 404 請求錯誤於 [v3.1.1](https://github.com/cout-m6o/OxGFrame/releases/tag/v3.1.1)。
 
 - 修改 StreamingAssetsHelper 改為動態檢測內置資源的方式 (透過檢查 Package 文件夾中是否有 BuildinCatalog.bytes 文件，如果有表示該 Package 存在)。
 - 修改 YooAssetBridge 代碼。
@@ -1602,7 +1750,7 @@ Fixed StreamingAssetsHelper 404 request error in [v3.1.1](https://github.com/mic
 
 # English
 
-### Note: Upgraded to [3.0.1](https://github.com/michael811125/OxGFrame/releases/tag/v3.0.1) to fix SBP compatibility issues.
+### Note: Upgraded to [3.0.1](https://github.com/cout-m6o/OxGFrame/releases/tag/v3.0.1) to fix SBP compatibility issues.
 
 - **Hotfixer**
   - Added the OXGFRAME_HYBRIDCLR_DISABLED symbol, which skips the AOTAssemblies metadata loading process during CheckHotfix, but the initial loading of Hotfix Package and HotfixAssemblies will still be executed. (If HybridCLR functionality is disabled, it is recommended to use this symbol to skip the Hotfix process).
@@ -1655,7 +1803,7 @@ Fixed StreamingAssetsHelper 404 request error in [v3.1.1](https://github.com/mic
 
 # 中文
 
-### Note: 升至 [3.0.1](https://github.com/michael811125/OxGFrame/releases/tag/v3.0.1) 修正 SBP 兼容性問題。
+### Note: 升至 [3.0.1](https://github.com/cout-m6o/OxGFrame/releases/tag/v3.0.1) 修正 SBP 兼容性問題。
 
 - **Hotfixer**
   - 新增 OXGFRAME_HYBRIDCLR_DISABLED symbol，CheckHotfix 時，將略過處理 AOTAssemblies 補元數據加載流程，不過 Hotfix Package 初始跟 HotfixAssemblies 加載依然會執行 (如果關閉 HybridCLR 功能，建議加上此標籤略過處理 Hotfix 流程)。
@@ -2095,7 +2243,7 @@ public class PackageOperation
     public void UserTryCreateDownloader()
 }
 ```
-- Modified UIBase method name [#1adf602](https://github.com/michael811125/OxGFrame/commit/1adf6028aa980169732ea1a40f2d8df1b8c4584e) (Replace all below).
+- Modified UIBase method name [#1adf602](https://github.com/cout-m6o/OxGFrame/commit/1adf6028aa980169732ea1a40f2d8df1b8c4584e) (Replace all below).
 
 method ShowAnime => ShowAnimation
 
@@ -2156,7 +2304,7 @@ param animeEndCb => animationEnd
 
 ## [2.9.10] - 2023-12-28
 - Updated YooAsset to v2.1.0 ([CHANGELOG](https://github.com/tuyoogame/YooAsset/releases/tag/2.1.0)).
-- Organized coding style ([Wiki](https://github.com/michael811125/OxGFrame/wiki/Coding-Style)).
+- Organized coding style ([Wiki](https://github.com/cout-m6o/OxGFrame/wiki/Coding-Style)).
 
 ## [2.9.9] - 2023-12-18
 - Added PackageOperation feature, can download packages more easier (please checkout BundleDLCDemo).
@@ -2432,7 +2580,7 @@ param animeEndCb => animationEnd
 ## [2.7.7] - 2023-08-27
 - Updated YooAsset to 1.5.4-perview.
 - Installed OxGKit.LoggingSystem for all modules log print.
-  - Add https://github.com/michael811125/OxGKit.git?path=Assets/OxGKit/LoggingSystem/Scripts to Package Manager
+  - Add https://github.com/cout-m6o/OxGKit.git?path=Assets/OxGKit/LoggingSystem/Scripts to Package Manager
 
 **Note: Must install OxGKit.LoggingSystem, becuase all modules log are dependent it.**
 
@@ -2630,7 +2778,7 @@ Get Download Info
 
 ## [2.5.2] - 2023-07-09
 - Removed OxGFrame.Utility.
-  - Install OxGKit.Utilities Add https://github.com/michael811125/OxGKit.git?path=Assets/OxGKit/Utilities/Scripts to Package Manager.
+  - Install OxGKit.Utilities Add https://github.com/cout-m6o/OxGKit.git?path=Assets/OxGKit/Utilities/Scripts to Package Manager.
   - If already use must reassign using OxGKit.Utilities (replace namespace prefix OxGFrame.Utility to OxGKit.Utilities).
 
 **Note: (Reinstall) Remove OxGFrame from Package Manager, and then install OxGKit.Utilities first, Finally reinstall OxGFrame**

@@ -88,6 +88,16 @@ namespace OxGFrame.CoreFrame.Editor
         public void Sort()
         {
             this.list = this.list.OrderBy(o => o.TailName).ToList();
+
+            // 排序後 list 的順序已變更，必須同步重建索引表 (否則 indexer 會依過期的索引寫入錯誤的位置)
+            this.indexByKey.Clear();
+            for (int i = 0; i < this.list.Count; i++)
+            {
+                var key = this.list[i].TailName;
+                // 僅索引 dict 內存在的 key，重複時以首次出現者為準 (與 OnAfterDeserialize 的規則一致)
+                if (key != null && this.dict.ContainsKey(key) && !this.indexByKey.ContainsKey(key))
+                    this.indexByKey.Add(key, i);
+            }
         }
 
         public void Add(TKey key, TValue value)

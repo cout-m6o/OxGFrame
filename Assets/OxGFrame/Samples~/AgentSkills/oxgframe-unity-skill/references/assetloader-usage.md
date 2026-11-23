@@ -200,6 +200,14 @@ Download tuning on `BundleConfig`: `maxConcurrencyDownloadCount` (10), `failedRe
 Decryption (`DecryptInfo` on PatchLauncher) arg formats:
 `"none"`, `"offset, 12"`, `"xor, 23"`, `"ht2xor, 34, 45, 56"`, `"ht2xorplus, 34, 45, 56, 78"`, `"aes, key, iv"`, `"chacha20, key, nonce, 1"`, `"xxtea, key"`, `"offsetxor, 12, 23"` — separate settings for bundles and manifest.
 
+## YooAsset versions
+
+YooAsset 2.x and 3.x are both supported: the framework switches its own code with the `YOOASSET_2` / `YOOASSET_3` version defines (verified 2.3.18, 2.3.19, 3.0.3-beta, 3.0.4 – 3.0.7; 3.0.5+ recommended). Keep project code on the `AssetLoaders` / `AssetPatcher` facades so it stays independent of the installed major version. Bundles built by v2 and v3 are not interchangeable — rebuild after switching. `BundleConfig.BuildMode.ArchiveFileBuildPipeline` exists only with YooAsset 3.x; `BuiltinBuildPipeline`, `ScriptableBuildPipeline` and `RawFileBuildPipeline` exist with both.
+
+## Config files and exports (editor)
+
+`AppInfo.json`, `PatchInfo.json`, `CdnConfig.dat` and the CDN folder layout are produced by the framework's exporters — the windows `OxGFrame/AssetLoader/Export Bundle And Config Generator` and `Bundle Url Config Generator (CdnConfig.dat)`, or the `OxGFrame.AssetLoader.Editor.BundleHelper.Export*` methods behind them — never written or copied by hand. Bundle encryption settings live in the `CryptogramSettings` asset (`YooAsset/OxGFrame Cryptogram Settings With YooAsset`). Call recipes and caveats: `editor-tools.md`.
+
 ## Utility
 
 ```csharp

@@ -34,6 +34,11 @@ namespace OxGFrame.MediaFrame.Editor
         private SerializedObject _serObj;
         private SerializedProperty _mediaUrlPlansPty;
 
+        /// <summary>
+        /// 背景樣式緩存 (Key 為色碼，所建立的貼圖於 OnDisable 時銷毀)
+        /// </summary>
+        private readonly Dictionary<string, GUIStyle> _backgroundStyles = new Dictionary<string, GUIStyle>();
+
         internal static string projectPath;
         internal static string keySaver;
 
@@ -53,6 +58,13 @@ namespace OxGFrame.MediaFrame.Editor
 
         private void OnEnable()
         {
+            // Domain Reload (重新編譯、進入 Play Mode) 或 Layout 還原後，靜態欄位會被清空，需補回儲存鍵值 (與 ShowWindow 相同)
+            if (string.IsNullOrEmpty(keySaver))
+            {
+                projectPath = Application.dataPath;
+                keySaver = $"{projectPath}_{nameof(MediaUrlConfigGeneratorWindow)}";
+            }
+
             this._serObj = new SerializedObject(this);
             this._mediaUrlPlansPty = this._serObj.FindProperty("mediaUrlPlans");
 
@@ -63,8 +75,41 @@ namespace OxGFrame.MediaFrame.Editor
 
             // Preset Media Url Plans
             string jsonMediaUrlPlans = EditorStorage.GetData(keySaver, "mediaUrlPlans", string.Empty);
-            if (!string.IsNullOrEmpty(jsonMediaUrlPlans)) this.mediaUrlPlans = JsonConvert.DeserializeObject<List<MediaUrlPlan>>(jsonMediaUrlPlans);
+            // 內容為 null 的 Json 會反序列化為 null，需以空列表取代 (避免後續 OnGUI 拋出 NullReferenceException)
+            if (!string.IsNullOrEmpty(jsonMediaUrlPlans)) this.mediaUrlPlans = JsonConvert.DeserializeObject<List<MediaUrlPlan>>(jsonMediaUrlPlans) ?? new List<MediaUrlPlan>();
             this._choicePlanIndex = Convert.ToInt32(EditorStorage.GetData(keySaver, "_choicePlanIndex", "0"));
+        }
+
+        private void OnDisable()
+        {
+            // 銷毀背景樣式緩存所建立的貼圖 (HideAndDontSave 的貼圖需自行銷毀)
+            foreach (var style in this._backgroundStyles.Values)
+            {
+                if (style.normal.background != null) DestroyImmediate(style.normal.background);
+            }
+            this._backgroundStyles.Clear();
+        }
+
+        /// <summary>
+        /// 取得純色背景樣式 (依色碼緩存 1x1 貼圖的樣式，避免每次 OnGUI 事件重複建立)
+        /// </summary>
+        /// <param name="htmlColor"></param>
+        /// <returns></returns>
+        private GUIStyle _GetBackgroundStyle(string htmlColor)
+        {
+            // 緩存的貼圖失效時 (例如已被銷毀)，會重新建立
+            if (this._backgroundStyles.TryGetValue(htmlColor, out GUIStyle style) && style.normal.background != null) return style;
+
+            style = new GUIStyle();
+            var bg = new Texture2D(1, 1);
+            bg.hideFlags = HideFlags.HideAndDontSave;
+            ColorUtility.TryParseHtmlString(htmlColor, out Color color);
+            bg.SetPixel(0, 0, color);
+            bg.Apply();
+            style.normal.background = bg;
+            this._backgroundStyles[htmlColor] = style;
+
+            return style;
         }
 
         private void OnGUI()
@@ -77,13 +122,7 @@ namespace OxGFrame.MediaFrame.Editor
         {
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
             centeredStyle.alignment = TextAnchor.UpperCenter;
@@ -129,8 +168,9 @@ namespace OxGFrame.MediaFrame.Editor
             GUILayout.FlexibleSpace();
 
             // auto reveal toggle
+            EditorGUI.BeginChangeCheck();
             this.autoReveal = GUILayout.Toggle(this.autoReveal, new GUIContent("Auto Reveal", "If checked, after process will reveal destination folder."));
-            EditorStorage.SaveData(keySaver, "autoReveal", this.autoReveal.ToString());
+            if (EditorGUI.EndChangeCheck()) EditorStorage.SaveData(keySaver, "autoReveal", this.autoReveal.ToString());
 
             // process button
             Color bc = GUI.backgroundColor;
@@ -138,6 +178,8 @@ namespace OxGFrame.MediaFrame.Editor
             if (GUILayout.Button("Process", GUILayout.MaxWidth(100f)))
             {
                 string outputPath = Application.streamingAssetsPath;
+                // 輸出目錄不存在時先行建立 (避免寫入配置文件時拋出 DirectoryNotFoundException)
+                if (!Directory.Exists(outputPath)) Directory.CreateDirectory(outputPath);
                 MediaHelper.ExportMediaUrlConfig(this.audioUrlset, this.videoUrlset, outputPath);
                 EditorUtility.DisplayDialog("Process Message", "Export MediaUrlConfig To StreamingAssets.", "OK");
                 AssetDatabase.Refresh();
@@ -154,13 +196,7 @@ namespace OxGFrame.MediaFrame.Editor
 
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#263840", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#263840");
             EditorGUILayout.BeginVertical(style);
 
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
@@ -189,7 +225,8 @@ namespace OxGFrame.MediaFrame.Editor
             // Load selection button
             Color bc = GUI.backgroundColor;
             GUI.backgroundColor = new Color32(83, 152, 255, 255);
-            if (GUILayout.Button("Copy Current", GUILayout.MaxWidth(100f)))
+            // 無任何 Plan 時不處理，並先將索引修正至有效範圍內 (避免以超出範圍的索引存取 Plans)
+            if (GUILayout.Button("Copy Current", GUILayout.MaxWidth(100f)) && this._ClampChoicePlanIndex())
             {
                 bool confirmation = EditorUtility.DisplayDialog
                 (
@@ -278,9 +315,27 @@ namespace OxGFrame.MediaFrame.Editor
             EditorGUILayout.EndScrollView();
         }
 
+        /// <summary>
+        /// 將 Plan 索引修正至有效範圍內 (Plans 被移除後，索引可能殘留於範圍外)，無任何 Plan 時返回 false
+        /// </summary>
+        /// <returns></returns>
+        private bool _ClampChoicePlanIndex()
+        {
+            if (this.mediaUrlPlans.Count == 0) return false;
+
+            int choicePlanIndex = Mathf.Clamp(this._choicePlanIndex, 0, this.mediaUrlPlans.Count - 1);
+            if (choicePlanIndex != this._choicePlanIndex)
+            {
+                this._choicePlanIndex = choicePlanIndex;
+                EditorStorage.SaveData(keySaver, "_choicePlanIndex", this._choicePlanIndex.ToString());
+            }
+
+            return true;
+        }
+
         private void _LoadMediaUrlPlanToCurrent()
         {
-            if (this.mediaUrlPlans.Count == 0) return;
+            if (!this._ClampChoicePlanIndex()) return;
 
             var mediaUrlPlan = this.mediaUrlPlans[this._choicePlanIndex];
 
@@ -294,7 +349,7 @@ namespace OxGFrame.MediaFrame.Editor
 
         private void _CopyCurrentToMediaUrlPlan()
         {
-            if (this.mediaUrlPlans.Count == 0) return;
+            if (!this._ClampChoicePlanIndex()) return;
 
             var mediaUrlPlan = this.mediaUrlPlans[this._choicePlanIndex];
 
@@ -332,7 +387,8 @@ namespace OxGFrame.MediaFrame.Editor
             {
                 EditorStorage.SaveData(keySaver, $"mediaUrlPlanFilePath", Path.GetDirectoryName(filePath));
                 string json = File.ReadAllText(filePath);
-                this.mediaUrlPlans = JsonConvert.DeserializeObject<List<MediaUrlPlan>>(json);
+                // 空檔案或內容為 null 的 Json 會反序列化為 null，需以空列表取代 (避免後續 OnGUI 拋出 NullReferenceException)
+                this.mediaUrlPlans = JsonConvert.DeserializeObject<List<MediaUrlPlan>>(json) ?? new List<MediaUrlPlan>();
 
                 // Resave media plans without format
                 json = JsonConvert.SerializeObject(this.mediaUrlPlans);

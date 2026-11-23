@@ -30,6 +30,12 @@ namespace OxGFrame.GSIFrame
         /// </summary>
         protected GSIBase _currentGameStage { get; private set; }
 
+        /// <summary>
+        /// Record a pending switch whose target id equals the current id while no game stage is running yet
+        /// (e.g. the first switch to a game stage registered with id 0, which equals the initial current id)
+        /// </summary>
+        private bool _hasPendingChange = false;
+
         private static readonly object _locker = new object();
         private static T _instance = null;
         /// <summary>
@@ -346,7 +352,17 @@ namespace OxGFrame.GSIFrame
             this._incomingId = id;
 
             if (this._incomingId == this._currentId)
-                Logging.PrintWarning<Logger>($" 【>>>>>> Same GameStage (Change Failed - Try Force) <<<<<<】Id: {this._incomingId}, Stage: {gameStage.GetType().Name}");
+            {
+                // 尚未運行任何 GameStage 時，即使 Id 與 currentId 相同也必須視為有效的切換
+                // (ex: 首次切換至 Id 為 0 的 GameStage，由於 currentId 的初始值也為 0，會被誤判為相同的 GameStage 而永遠無法進入)
+                if (this._currentGameStage == null)
+                {
+                    this._hasPendingChange = true;
+                    Logging.PrintInfo<Logger>($" 【>>>>>> Change GameStage <<<<<<】Id: {this._incomingId}, Stage: {gameStage.GetType().Name}");
+                }
+                else
+                    Logging.PrintWarning<Logger>($" 【>>>>>> Same GameStage (Change Failed - Try Force) <<<<<<】Id: {this._incomingId}, Stage: {gameStage.GetType().Name}");
+            }
             else
                 Logging.PrintInfo<Logger>($" 【>>>>>> Change GameStage <<<<<<】Id: {this._incomingId}, Stage: {gameStage.GetType().Name}");
         }
@@ -372,6 +388,7 @@ namespace OxGFrame.GSIFrame
             var gameStage = this.GetGameStage<GSIBase>(id);
             Logging.PrintInfo<Logger>($" 【>>>>>> Change GameStage Force <<<<<<】Id: {id}, Stage: {gameStage?.GetType().Name}");
 
+            this._hasPendingChange = false;          // 強制切換時，取消等待中的切換
             this.ReleaseGameStage();                 // 立即釋放原本的 GameStage
             this._currentId = this._incomingId = id; // 立即指定 currentId & incomingId = id
             this.InitGameStage();                    // 立即開始進行 GameStage 初始的處理過程
@@ -384,8 +401,11 @@ namespace OxGFrame.GSIFrame
         protected void UpdateGameStage(float dt = 0.0f)
         {
             // 非立即的切換 GameStage 的情況下會去判斷，如果 currentId 與 incomingId 不同的話，就會進入切換
-            if (this._currentId != this._incomingId)
+            // (尚未運行任何 GameStage 且 Id 相同的等待切換，也會進入切換)
+            if (this._currentId != this._incomingId ||
+                this._hasPendingChange)
             {
+                this._hasPendingChange = false;
                 this.ReleaseGameStage();            // 釋放原本的 GameStage
                 this._currentId = this._incomingId; // 將 incomingId 記錄至 currentId
                 this.InitGameStage();               // 開始進行 GameStage 初始的處理過程

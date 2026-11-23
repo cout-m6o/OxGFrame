@@ -123,19 +123,28 @@ namespace OxGFrame.AssetLoader.GroupCacher
         {
             if (this._keyCacher.Count > 0)
             {
-                foreach (var keyGroup in this._keyCacher.ToArray())
+                // 批次處理，避免群組內每個資源都觸發一次 Resources.UnloadUnusedAssets
+                CacheResource.GetInstance().BeginBatchUnload();
+                try
                 {
-                    if (keyGroup.id != id)
-                        continue;
-
-                    // 依照計數次數釋放
-                    for (int i = keyGroup.refCount; i > 0; i--)
+                    foreach (var keyGroup in this._keyCacher.ToArray())
                     {
-                        CacheResource.GetInstance().UnloadAsset(keyGroup.assetName, false);
-                    }
+                        if (keyGroup.id != id)
+                            continue;
 
-                    // 完成後，直接刪除緩存
-                    this.DelFromCache(keyGroup.id, keyGroup.assetName);
+                        // 依照計數次數釋放
+                        for (int i = keyGroup.refCount; i > 0; i--)
+                        {
+                            CacheResource.GetInstance().UnloadAsset(keyGroup.assetName, false);
+                        }
+
+                        // 完成後，直接刪除緩存
+                        this.DelFromCache(keyGroup.id, keyGroup.assetName);
+                    }
+                }
+                finally
+                {
+                    CacheResource.GetInstance().EndBatchUnload();
                 }
 
                 Logging.Print<Logger>($"【Unload All Assets from Group】 => Released all references, Cache Count: {this.Count}, GroupId: {id}");

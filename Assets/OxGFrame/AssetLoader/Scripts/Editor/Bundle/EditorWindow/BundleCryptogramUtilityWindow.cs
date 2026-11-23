@@ -1,6 +1,7 @@
 ﻿using OxGFrame.AssetLoader.Bundle;
 using OxGFrame.AssetLoader.Utility;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
@@ -32,6 +33,11 @@ namespace OxGFrame.AssetLoader.Editor
 
         private CryptogramSettings _settings;
 
+        /// <summary>
+        /// 背景樣式緩存 (Key 為色碼，所建立的貼圖於 OnDisable 時銷毀)
+        /// </summary>
+        private readonly Dictionary<string, GUIStyle> _backgroundStyles = new Dictionary<string, GUIStyle>();
+
         internal static string projectPath;
         internal static string keySaver;
 
@@ -51,6 +57,13 @@ namespace OxGFrame.AssetLoader.Editor
 
         private void OnEnable()
         {
+            // Domain Reload (重新編譯、進入 Play Mode) 或 Layout 還原後，靜態欄位會被清空，需補回儲存鍵值 (與 ShowWindow 相同)
+            if (string.IsNullOrEmpty(keySaver))
+            {
+                projectPath = Application.dataPath;
+                keySaver = $"{projectPath}_{nameof(BundleCryptogramUtilityWindow)}";
+            }
+
             this._settings = AssetUtility.LoadSettingsData<CryptogramSettings>();
             this._LoadSettingsData();
             this.sourceFolder = EditorStorage.GetData(keySaver, $"sourceFolder", Path.Combine($"{Application.dataPath}/", AssetBundleBuilderHelper.GetDefaultBuildOutputRoot()));
@@ -96,6 +109,35 @@ namespace OxGFrame.AssetLoader.Editor
         private void OnDisable()
         {
             base.SaveChanges();
+
+            // 銷毀背景樣式緩存所建立的貼圖 (HideAndDontSave 的貼圖需自行銷毀)
+            foreach (var style in this._backgroundStyles.Values)
+            {
+                if (style.normal.background != null) DestroyImmediate(style.normal.background);
+            }
+            this._backgroundStyles.Clear();
+        }
+
+        /// <summary>
+        /// 取得純色背景樣式 (依色碼緩存 1x1 貼圖的樣式，避免每次 OnGUI 事件重複建立)
+        /// </summary>
+        /// <param name="htmlColor"></param>
+        /// <returns></returns>
+        private GUIStyle _GetBackgroundStyle(string htmlColor)
+        {
+            // 緩存的貼圖失效時 (例如已被銷毀)，會重新建立
+            if (this._backgroundStyles.TryGetValue(htmlColor, out GUIStyle style) && style.normal.background != null) return style;
+
+            style = new GUIStyle();
+            var bg = new Texture2D(1, 1);
+            bg.hideFlags = HideFlags.HideAndDontSave;
+            ColorUtility.TryParseHtmlString(htmlColor, out Color color);
+            bg.SetPixel(0, 0, color);
+            bg.Apply();
+            style.normal.background = bg;
+            this._backgroundStyles[htmlColor] = style;
+
+            return style;
         }
 
         private void OnGUI()
@@ -166,13 +208,7 @@ namespace OxGFrame.AssetLoader.Editor
         {
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
             centeredStyle.alignment = TextAnchor.UpperCenter;
@@ -195,13 +231,7 @@ namespace OxGFrame.AssetLoader.Editor
         {
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
             centeredStyle.alignment = TextAnchor.UpperCenter;
@@ -229,13 +259,7 @@ namespace OxGFrame.AssetLoader.Editor
         {
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
             centeredStyle.alignment = TextAnchor.UpperCenter;
@@ -271,13 +295,7 @@ namespace OxGFrame.AssetLoader.Editor
         {
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
             centeredStyle.alignment = TextAnchor.UpperCenter;
@@ -315,13 +333,7 @@ namespace OxGFrame.AssetLoader.Editor
         {
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
             centeredStyle.alignment = TextAnchor.UpperCenter;
@@ -348,13 +360,7 @@ namespace OxGFrame.AssetLoader.Editor
         {
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
             centeredStyle.alignment = TextAnchor.UpperCenter;
@@ -363,7 +369,16 @@ namespace OxGFrame.AssetLoader.Editor
 
             this.chacha20Key = EditorGUILayout.TextField("ChaCha20 KEY", this.chacha20Key);
             this.chacha20Nonce = EditorGUILayout.TextField("ChaCha20 NONCE", this.chacha20Nonce);
-            this.chacha20Counter = Convert.ToUInt32(EditorGUILayout.IntField("ChaCha20 COUNTER", Convert.ToInt32(this.chacha20Counter)));
+            // 以 LongField 編輯並限制於 uint 範圍內 (避免負值或超過 int.MaxValue 的值於轉型時拋出 OverflowException)
+            EditorGUI.BeginChangeCheck();
+            long counter = EditorGUILayout.LongField("ChaCha20 COUNTER", this.chacha20Counter);
+            // 僅於數值變更時才套用 (輸入內容暫時無法解析時，LongField 的返回值並不可靠，需維持原值)
+            if (EditorGUI.EndChangeCheck())
+            {
+                if (counter < 0) counter = 0;
+                else if (counter > uint.MaxValue) counter = uint.MaxValue;
+                this.chacha20Counter = (uint)counter;
+            }
 
             this._DrawOperateButtonsView(this.cryptogramType);
 
@@ -378,13 +393,7 @@ namespace OxGFrame.AssetLoader.Editor
         {
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
             centeredStyle.alignment = TextAnchor.UpperCenter;
@@ -407,13 +416,7 @@ namespace OxGFrame.AssetLoader.Editor
         {
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
             centeredStyle.alignment = TextAnchor.UpperCenter;
@@ -555,8 +558,11 @@ namespace OxGFrame.AssetLoader.Editor
         private void _OpenSourceFolder()
         {
             string folderPath = EditorStorage.GetData(keySaver, "sourceFolder", Path.Combine($"{Application.dataPath}/", AssetBundleBuilderHelper.GetDefaultBuildOutputRoot()));
-            this.sourceFolder = EditorUtility.OpenFolderPanel("Open Source Folder", folderPath, string.Empty);
-            if (!string.IsNullOrEmpty(this.sourceFolder)) EditorStorage.SaveData(keySaver, "sourceFolder", this.sourceFolder);
+            // 取消選取時會返回空字串，此時保留原有路徑 (避免後續處理以空路徑為目標)
+            string selectedPath = EditorUtility.OpenFolderPanel("Open Source Folder", folderPath, string.Empty);
+            if (string.IsNullOrEmpty(selectedPath)) return;
+            this.sourceFolder = selectedPath;
+            EditorStorage.SaveData(keySaver, "sourceFolder", this.sourceFolder);
         }
     }
 }

@@ -356,6 +356,48 @@ namespace OxGFrame.AssetLoader.Editor
             return args;
         }
         #endregion
+
+        #region Automation
+        /// <summary>
+        /// 查詢來源路徑下指定 Packages 的最新版本 (供 Unity CLI 與自動化流程於輸出前預先檢查)
+        /// <para>查詢規則與輸出 Bundles 時相同：來源路徑下的平台資料夾一律採用當前的 Build Target，並取輸出時間最大值的版本。</para>
+        /// </summary>
+        /// <param name="inputPath">Bundle 來源路徑 (空值時採用 YooAsset 預設的輸出路徑)</param>
+        /// <param name="packageNames">欲查詢的 Package 名稱</param>
+        /// <param name="inputPathWithPlatform">實際查詢的平台資料夾路徑</param>
+        /// <returns>Key 為 Package 名稱，Value 為最新版本的資料夾名稱 (查無已建置版本的 Package 不會包含在內)</returns>
+        public static Dictionary<string, string> FindNewestPackageVersions(string inputPath, IEnumerable<string> packageNames, out string inputPathWithPlatform)
+        {
+            var newestVersions = new Dictionary<string, string>();
+
+            // 取得 Bundle 輸出路徑
+            if (string.IsNullOrEmpty(inputPath)) inputPath = AssetBundleBuilderHelper.GetDefaultBuildOutputRoot();
+
+            // 取得平台路徑
+            inputPathWithPlatform = Path.Combine(inputPath, $"{EditorUserBuildSettings.activeBuildTarget}");
+
+            if (packageNames == null || !Directory.Exists(inputPathWithPlatform)) return newestVersions;
+
+            // 取得平台下的所有 Packages
+            string[] packagePaths = Directory.GetDirectories(inputPathWithPlatform);
+
+            foreach (var packagePath in packagePaths)
+            {
+                string packageName = Path.GetFileNameWithoutExtension(packagePath);
+                if (!packageNames.Contains(packageName)) continue;
+
+                // 取得 NewestPackagePath
+                string newestVersionPath = (string)NewestPackagePathFilter(packagePath)[0];
+
+                // If the latest version path cannot be found, skip it
+                if (string.IsNullOrEmpty(newestVersionPath)) continue;
+
+                newestVersions[packageName] = Path.GetFileNameWithoutExtension(newestVersionPath);
+            }
+
+            return newestVersions;
+        }
+        #endregion
         #endregion
 
         #region Internal Methods

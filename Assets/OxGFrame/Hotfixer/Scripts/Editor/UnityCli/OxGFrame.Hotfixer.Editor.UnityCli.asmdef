@@ -1,0 +1,28 @@
+{
+    "name": "OxGFrame.Hotfixer.Editor.UnityCli",
+    "rootNamespace": "",
+    "references": [
+        "OxGFrame.Hotfixer.Runtime",
+        "OxGFrame.Hotfixer.Editor",
+        "Unity.Pipeline.Attributes"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_PIPELINE_1"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.pipeline",
+            "expression": "[1.0.0,2.0.0)",
+            "define": "UNITY_PIPELINE_1"
+        }
+    ],
+    "noEngineReferences": false
+}

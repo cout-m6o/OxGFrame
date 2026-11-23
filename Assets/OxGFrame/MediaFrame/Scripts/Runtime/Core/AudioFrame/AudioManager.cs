@@ -245,7 +245,9 @@ namespace OxGFrame.MediaFrame.AudioFrame
 
             foreach (var mixer in this._listMixer)
             {
-                if (mixer.name == mixerName)
+                // 略過未指定的 Mixer 欄位，避免空引用異常
+                if (mixer != null &&
+                    mixer.name == mixerName)
                     return mixer;
             }
 
@@ -327,8 +329,9 @@ namespace OxGFrame.MediaFrame.AudioFrame
             {
                 for (int i = 0; i < audBases.Length; i++)
                 {
+                    // 需傳遞調用端指定的 loops 與 volume (暫停中的音訊恢復播放時，僅會套用 volume，循環次數維持暫停前的狀態)
                     if (!audBases[i].IsPlaying())
-                        this._Play(audBases[i], 0, 0f);
+                        this._Play(audBases[i], loops, volume);
                 }
 
                 return audBases;

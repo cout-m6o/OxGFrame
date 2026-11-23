@@ -439,6 +439,10 @@ namespace OxGFrame.Hotfixer.HotfixFsm
                 }
                 catch (Exception ex)
                 {
+#if !UNITY_WEBGL
+                    // 異常可能發生於其他線程 (SwitchToThreadPool 之後)，需先切回主線程，避免後續的狀態切換與事件派發在非主線程上執行
+                    await UniTask.SwitchToMainThread();
+#endif
                     Logging.PrintException<Logger>(ex);
                 }
 
@@ -543,6 +547,10 @@ namespace OxGFrame.Hotfixer.HotfixFsm
                 }
                 catch (Exception ex)
                 {
+#if !UNITY_WEBGL
+                    // 異常可能發生於其他線程 (SwitchToThreadPool 之後)，需先切回主線程，避免後續的狀態切換與事件派發在非主線程上執行
+                    await UniTask.SwitchToMainThread();
+#endif
                     Logging.PrintException<Logger>(ex);
                 }
 
