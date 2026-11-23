@@ -15,7 +15,15 @@ namespace OxGFrame.CoreFrame.SRFrame
                 SRBase[] srBases = this.gameObject.GetComponentsInChildren<SRBase>(true);
                 foreach (var srBase in srBases)
                 {
-                    SRManager.GetInstance().Close(srBase.assetName, true, true);
+                    // 逐一防護，避免單一 SR 的關閉流程拋出異常時，中斷其餘 SR 的連動釋放
+                    try
+                    {
+                        SRManager.GetInstance().Close(srBase.assetName, true, true);
+                    }
+                    catch
+                    {
+                        /* Nothing to do */
+                    }
                 }
             }
             catch

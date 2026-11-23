@@ -59,11 +59,50 @@ namespace OxGFrame.CoreFrame.Editor
         /// </summary>
         private const string _REPLACEMENT_PATTERN_END = "#endregion";
 
+        /// <summary>
+        /// 檔案標頭單一項目的表達式 (以 \G 逐項銜接比對，遇到不屬於標頭的內容即無法繼續比對)
+        /// <para>依序為：空行、行註解、區塊註解、前置處理指示詞、using 指示詞 (可作為插入點)，以及其餘寫法的 using 與 extern alias 指示詞 (僅略過)。</para>
+        /// </summary>
+        private const string _HEADER_ITEM_PATTERN =
+            @"\G(?:" +
+            @"[^\S\n]*\n" +
+            @"|[^\S\n]*//[^\n]*\n" +
+            @"|[^\S\n]*/\*.*?\*/" +
+            @"|[^\S\n]*#[^\S\n]*(?<directive>\w*)[^\n]*\n" +
+            @"|(?<using>[ \t]*using\s+[^;\r\n]+;[ \t]*\r?\n)" +
+            @"|[^\S\n]*(?:global\s+using|using|extern\s+alias)\b[^;]*;[^\n]*\n" +
+            @")";
+
+        /// <summary>
+        /// 屬性標記內各屬性名稱的表達式 (ex: [HideInInspector]、[Tooltip("Text"), Space]、[field: SerializeField])
+        /// </summary>
+        private const string _SEARCH_ATTRIBUTE_NAME_PATTERN = @"(?:\[|,)\s*(?:[A-Za-z_]\w*\s*:\s*)?(?<name>[A-Za-z_][\w.]*)";
+
         private static CodeBindingSettings _settings;
         private static FrameBase _script;
         private static Dictionary<string, BindInfo> _collectBindInfos = new Dictionary<string, BindInfo>();
         private static string _builder = string.Empty;
         private static readonly HashSet<string> _requiredNamespaces = new HashSet<string>();
+
+        /// <summary>
+        /// 屬性標記所需 using namespaces 的查找快取 (Key 為屬性標記的內容，腳本重載後自動清空)
+        /// </summary>
+        private static readonly Dictionary<string, string[]> _attrNamespaceCache = new Dictionary<string, string[]>();
+
+        /// <summary>
+        /// 前綴與腳本類型不符的節點名稱 (Runtime 僅綁定與腳本類型相符的前綴，僅用於提醒，不影響生成內容)
+        /// </summary>
+        private static readonly List<string> _mismatchedPrefixNodeNames = new List<string>();
+
+        /// <summary>
+        /// 是否由自動化流程調用 (不開啟剪貼簿視窗，生成內容改由回傳結果提供)
+        /// </summary>
+        private static bool _isAutomation = false;
+
+        /// <summary>
+        /// 本次生成是否已將綁定內容寫入腳本
+        /// </summary>
+        private static bool _isInserted = false;
 
         #region MenuItem
         [MenuItem("GameObject/OxGFrame/Auto Generate Bind Codes (Shift+B) #b", false, 0)]
@@ -84,6 +123,112 @@ namespace OxGFrame.CoreFrame.Editor
 
             // 生成代碼
             _GenerateCodes();
+        }
+        #endregion
+
+        #region Automation
+        /// <summary>
+        /// 綁定代碼的生成結果 (供 Unity CLI 與自動化流程取得)
+        /// </summary>
+        public class GenerateResult
+        {
+            /// <summary>
+            /// 是否已執行生成 (找不到 Prefab 時為 false)
+            /// </summary>
+            public bool generated;
+
+            /// <summary>
+            /// 是否已將綁定內容寫入腳本 (Auto 方式且腳本內具有綁定區塊時為 true)
+            /// </summary>
+            public bool inserted;
+
+            /// <summary>
+            /// 綁定方式 (Auto 或 Manual)
+            /// </summary>
+            public string methodType;
+
+            /// <summary>
+            /// 目標腳本的資源路徑 (Prefab 未掛載 UIBase、SRBase、CPBase 腳本時為 null)
+            /// </summary>
+            public string scriptPath;
+
+            /// <summary>
+            /// 綁定變數的數量
+            /// </summary>
+            public int bindCount;
+
+            /// <summary>
+            /// 生成的綁定區塊內容
+            /// </summary>
+            public string content;
+
+            /// <summary>
+            /// 綁定內容所需的 using namespaces
+            /// </summary>
+            public string[] usingNamespaces = new string[] { };
+
+            /// <summary>
+            /// 生成期間輸出至 Console 的訊息
+            /// </summary>
+            public string[] messages = new string[] { };
+        }
+
+        /// <summary>
+        /// 以指定的 Prefab 資源生成綁定代碼 (供 Unity CLI 與自動化流程調用)
+        /// <para>流程與選取 Prefab 根節點後執行 Auto Generate Bind Codes 相同，差異僅在於不開啟剪貼簿視窗，生成內容改由回傳結果提供。</para>
+        /// </summary>
+        /// <param name="prefabPath">Prefab 的資源路徑 (ex: Assets/Prefabs/ShopUI.prefab)</param>
+        /// <returns></returns>
+        public static GenerateResult GenerateByPrefabPath(string prefabPath)
+        {
+            var result = new GenerateResult();
+
+            using (var logCollector = new AutomationUtility.LogCollector())
+            {
+                GameObject prefab = string.IsNullOrEmpty(prefabPath) ? null : AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+                if (prefab == null)
+                {
+                    Debug.LogError($"Cannot find the prefab asset. Prefab Path: {prefabPath}");
+                    result.messages = logCollector.GetMessages();
+                    return result;
+                }
+
+                // 重置上一次生成的狀態 (避免流程提前返回時取得前次的生成內容)
+                _script = null;
+                _builder = string.Empty;
+                _collectBindInfos.Clear();
+                _requiredNamespaces.Clear();
+                _isInserted = false;
+
+                // 以選取 Prefab 根節點的方式執行，生成後還原原本的選取
+                UnityEngine.Object[] lastSelection = Selection.objects;
+                try
+                {
+                    _isAutomation = true;
+                    Selection.objects = new UnityEngine.Object[] { prefab };
+                    Execute();
+
+                    result.generated = !string.IsNullOrEmpty(_builder);
+                    result.inserted = _isInserted;
+                    result.methodType = (_settings != null) ? _settings.methodType.ToString() : null;
+                    result.bindCount = _collectBindInfos.Count;
+                    result.content = _builder;
+                    result.usingNamespaces = _requiredNamespaces.OrderBy(ns => ns, StringComparer.Ordinal).ToArray();
+                    if (_script != null)
+                    {
+                        string scriptPath = AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(_script));
+                        result.scriptPath = string.IsNullOrEmpty(scriptPath) ? null : scriptPath;
+                    }
+                }
+                finally
+                {
+                    _isAutomation = false;
+                    Selection.objects = lastSelection;
+                    result.messages = logCollector.GetMessages();
+                }
+            }
+
+            return result;
         }
         #endregion
 
@@ -135,8 +280,18 @@ namespace OxGFrame.CoreFrame.Editor
             _script = null;
             _builder = string.Empty;
             _collectBindInfos.Clear();
+            _mismatchedPrefixNodeNames.Clear();
             foreach (var go in Selection.gameObjects)
                 _CheckRuleAndCollect(go);
+
+            // 提醒前綴與腳本類型不符的節點 (ex: UIBase 底下使用 ~Node@)，這些節點於 Runtime 不會被綁定
+            if (_script != null &&
+                _mismatchedPrefixNodeNames.Count > 0)
+            {
+                string expectedPrefix = FrameConfig.BIND_PREFIXES[(_script is OxGFrame.CoreFrame.CPFrame.CPBase) ? 1 : 0];
+                string expectedHead = FrameConfig.BIND_COMPONENTS.Keys.FirstOrDefault(head => head.StartsWith(expectedPrefix, StringComparison.Ordinal)) ?? expectedPrefix;
+                Debug.LogWarning($"Found {_mismatchedPrefixNodeNames.Count} node(s) whose bind prefix does not match the script type ({_script.GetType().Name} only binds the nodes starting with [{expectedHead}{FrameConfig.BIND_HEAD_SEPARATOR}] at runtime): {string.Join(", ", _mismatchedPrefixNodeNames)}. The members generated for these nodes will stay null. Rename the nodes, or put the Stop End Symbol before them.", _script);
+            }
         }
 
         /// <summary>
@@ -196,6 +351,13 @@ namespace OxGFrame.CoreFrame.Editor
             // 變數存取權檢測
             string[] bindArgs = Binder.GetAccessModifierSplitNameBySeparator(bindInfo);
 
+            // 綁定名稱僅含分隔符時 (ex: _Node@$)，視為無效命名，避免 IndexOutOfRangeException 中斷整個生成流程
+            if (bindArgs == null ||
+                bindArgs.Length == 0)
+            {
+                return;
+            }
+
             // MyObj*Txt$public => ["MyObj*Txt", "public"]
             string fullBindName = bindArgs[0];
             string variableAccessModifier = (bindArgs.Length > 1) ? bindArgs[1] : null;
@@ -229,6 +391,19 @@ namespace OxGFrame.CoreFrame.Editor
 
             // 組件結尾檢測 => fullBindName = MyObj*Txt*Img = [MyObj, Txt, Img]
             string[] tails = Binder.GetTailSplitNameBySeparator(fullBindName);
+
+            // 移除 Attr 後名稱為空 (ex: _Node@[hi]) 或僅含分隔符 (ex: _Node@*) 時，視為無效命名，避免異常中斷整個生成流程
+            if (tails == null ||
+                tails.Length == 0)
+            {
+                return;
+            }
+
+            // 記錄前綴與腳本類型不符的節點 (Runtime 的綁定規則為 Binder.CheckNodeHasPrefix)
+            if (_script != null &&
+                !Binder.CheckNodeHasPrefix(name, _script))
+                _mismatchedPrefixNodeNames.Add(name);
+
             string variableName;
             List<string> bindNames = new List<string>();
             List<string> componentNames = new List<string>();
@@ -265,10 +440,10 @@ namespace OxGFrame.CoreFrame.Editor
                 switch (_settings.variableCaseType)
                 {
                     case CodeBindingSettings.CaseType.CamelCase:
-                        finalVariableName = char.ToLower(finalBindName[0]) + finalBindName.Substring(1);
+                        finalVariableName = char.ToLowerInvariant(finalBindName[0]) + finalBindName.Substring(1);
                         break;
                     case CodeBindingSettings.CaseType.PascalCase:
-                        finalVariableName = char.ToUpper(finalBindName[0]) + finalBindName.Substring(1);
+                        finalVariableName = char.ToUpperInvariant(finalBindName[0]) + finalBindName.Substring(1);
                         break;
                 }
 
@@ -309,6 +484,13 @@ namespace OxGFrame.CoreFrame.Editor
                     _requiredNamespaces.Add("UnityEngine");
                 else if (!string.IsNullOrEmpty(bindInfo.Value.usingNamespace))
                     _requiredNamespaces.Add(bindInfo.Value.usingNamespace);
+
+                // 收集屬性標記所需的 using namespace (否則腳本未引用該 namespace 時，生成的屬性標記無法編譯)
+                foreach (string attrName in bindInfo.Value.attrNames)
+                {
+                    foreach (string ns in _GetAttrNamespaces(_settings.GetAttrReference(attrName)))
+                        _requiredNamespaces.Add(ns);
+                }
             }
             #endregion
 
@@ -467,11 +649,50 @@ namespace OxGFrame.CoreFrame.Editor
         }
 
         /// <summary>
+        /// 取得屬性標記所需的 using namespaces
+        /// <para>僅處理未指定 namespace 的屬性名稱，且僅於查找結果唯一時採用 (查無型別或存在多個同名型別時，維持由使用者自行引用)。</para>
+        /// </summary>
+        /// <param name="attrReference">屬性標記的內容 (ex: [HideInInspector])</param>
+        /// <returns></returns>
+        private static string[] _GetAttrNamespaces(string attrReference)
+        {
+            if (string.IsNullOrEmpty(attrReference))
+                return new string[] { };
+
+            if (_attrNamespaceCache.TryGetValue(attrReference, out string[] namespaces))
+                return namespaces;
+
+            var results = new List<string>();
+            foreach (Match match in Regex.Matches(attrReference, _SEARCH_ATTRIBUTE_NAME_PATTERN))
+            {
+                string attrName = match.Groups["name"].Value;
+
+                // 已指定 namespace 的屬性不需要 using
+                if (attrName.Contains("."))
+                    continue;
+
+                var candidates = UsingNamespaceFinder.FindAttributeCandidates(attrName);
+                if (candidates.Count == 1 &&
+                    !string.IsNullOrEmpty(candidates[0].ns) &&
+                    !results.Contains(candidates[0].ns))
+                    results.Add(candidates[0].ns);
+            }
+
+            namespaces = results.ToArray();
+            _attrNamespaceCache[attrReference] = namespaces;
+            return namespaces;
+        }
+
+        /// <summary>
         /// 顯示剪貼簿
         /// </summary>
         /// <param name="content"></param>
         private static void _ShowClipboard(string content)
         {
+            // 由自動化流程調用時不開啟剪貼簿視窗 (生成內容改由回傳結果提供)
+            if (_isAutomation)
+                return;
+
             // 附上所需的 using namespaces 提示 (由使用者自行貼至腳本頂部)
             if (_requiredNamespaces.Count > 0)
             {
@@ -497,6 +718,15 @@ namespace OxGFrame.CoreFrame.Editor
             if (string.IsNullOrEmpty(scriptPath))
                 return;
 
+            // 非 UTF-8 編碼的腳本 (例如 Big5、GBK、Shift-JIS) 無法被正確解碼，寫回時會永久損毀非 ASCII 字元 (ex: 中文註解)
+            // 因此不進行寫入，改以手動方式提供綁定內容，並提示使用者先轉換腳本編碼
+            if (!_IsDecodableScript(scriptPath))
+            {
+                Debug.LogError($"Unable to insert binding content automatically, because the script is not encoded in UTF-8 (writing it back would corrupt non-ASCII characters). Please convert the script to UTF-8 first. Script Path: {scriptPath}", _script);
+                _ShowClipboard(content);
+                return;
+            }
+
             // 偵測原始編碼是否含 BOM (寫回時保持一致)
             bool hasBom = false;
             try
@@ -515,6 +745,9 @@ namespace OxGFrame.CoreFrame.Editor
 
             // Read all script content
             string scriptContent = System.IO.File.ReadAllText(scriptPath);
+
+            // 偵測原始內容的換行符 (寫回時保持一致)
+            string lineEnding = _DetectLineEnding(scriptContent);
 
             // Expression pattern
             string pattern = _REPLACEMENT_PATTERN;
@@ -539,8 +772,13 @@ namespace OxGFrame.CoreFrame.Editor
                 // To Unix style "\n"
                 scriptContent = scriptContent.Replace("\r\n", "\n").Replace("\r", "\n");
 
+                // 還原為原始檔案的換行符 (生成內容一律使用 "\n"，先統一後再轉換可避免寫回後換行符混用)
+                if (lineEnding != "\n")
+                    scriptContent = scriptContent.Replace("\n", lineEnding);
+
                 // Write file
                 System.IO.File.WriteAllText(scriptPath, scriptContent, new System.Text.UTF8Encoding(hasBom));
+                _isInserted = true;
 
                 AssetDatabase.Refresh();
                 EditorUtility.SetDirty(_script);
@@ -553,6 +791,71 @@ namespace OxGFrame.CoreFrame.Editor
                 Debug.LogWarning($"The pattern is ↓↓↓ (Copy the following into the script) ↓↓↓", _script);
                 Debug.LogWarning($"{_REPLACEMENT_PATTERN_HEAD}\n{_REPLACEMENT_PATTERN_END}");
             }
+        }
+
+        /// <summary>
+        /// 檢查腳本是否可被正確解碼 (帶有 UTF-16 或 UTF-32 的 BOM，或者內容為合法的 UTF-8)
+        /// </summary>
+        /// <param name="scriptPath"></param>
+        /// <returns></returns>
+        private static bool _IsDecodableScript(string scriptPath)
+        {
+            byte[] bytes;
+            try
+            {
+                bytes = System.IO.File.ReadAllBytes(scriptPath);
+            }
+            catch
+            {
+                // 無法讀取時交由後續流程處理 (維持原行為)
+                return true;
+            }
+
+            // 帶有 UTF-16 或 UTF-32 的 BOM 時，File.ReadAllText 會依 BOM 正確解碼
+            if (bytes.Length >= 2 &&
+                ((bytes[0] == 0xFF && bytes[1] == 0xFE) ||
+                 (bytes[0] == 0xFE && bytes[1] == 0xFF)))
+                return true;
+            if (bytes.Length >= 4 &&
+                bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0xFE && bytes[3] == 0xFF)
+                return true;
+
+            // 略過 UTF-8 BOM
+            int offset = (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) ? 3 : 0;
+
+            try
+            {
+                // 以嚴格模式解碼 (遇到無效位元組時拋出例外，而非以取代字元 U+FFFD 代替)
+                new System.Text.UTF8Encoding(false, true).GetString(bytes, offset, bytes.Length - offset);
+                return true;
+            }
+            catch (System.Text.DecoderFallbackException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 偵測內容所使用的換行符 (CRLF 多於 LF 時回傳 "\r\n"，其餘回傳 "\n")
+        /// </summary>
+        /// <param name="content"></param>
+        /// <returns></returns>
+        private static string _DetectLineEnding(string content)
+        {
+            int crlfCount = 0;
+            int lfCount = 0;
+            for (int i = 0; i < content.Length; i++)
+            {
+                if (content[i] != '\n')
+                    continue;
+
+                if (i > 0 && content[i - 1] == '\r')
+                    crlfCount++;
+                else
+                    lfCount++;
+            }
+
+            return (crlfCount > lfCount) ? "\r\n" : "\n";
         }
 
         /// <summary>
@@ -619,21 +922,85 @@ namespace OxGFrame.CoreFrame.Editor
             if (missings.Count == 0)
                 return scriptContent;
 
-            // 尋找檔案頂部最後一個 using 行的結尾作為插入點 (略過 namespace 或型別宣告之後的 using)
-            int insertIndex = 0;
-            foreach (Match m in Regex.Matches(scriptContent, @"^[ \t]*using\s+[^;\r\n]+;[ \t]*\r?\n", RegexOptions.Multiline))
-            {
-                string head = scriptContent.Substring(0, m.Index);
-                if (Regex.IsMatch(head, @"^\s*(namespace|class|struct|interface|enum)\s", RegexOptions.Multiline))
-                    break;
-                insertIndex = m.Index + m.Length;
-            }
+            // 尋找檔案標頭最後一個 using 行的結尾作為插入點 (僅掃描標頭，不會誤判方法內的 using 陳述式)
+            int insertIndex = _FindUsingInsertIndex(scriptContent);
 
             string insertText = string.Empty;
             foreach (string ns in missings)
                 insertText += $"using {ns};\n";
 
             return scriptContent.Insert(insertIndex, insertText);
+        }
+
+        /// <summary>
+        /// 尋找缺少的 using 應插入的位置 (僅掃描檔案標頭，回傳最後一個 using 行的結尾)
+        /// <para>已結束的 #if 區塊內的 using 不作為插入點，否則會被插入至 #if 內；標頭無可用的 using 行時，回傳 #define 與 #undef 之後的位置 (using 位於其前方會造成 CS1032)。</para>
+        /// </summary>
+        /// <param name="scriptContent"></param>
+        /// <returns></returns>
+        private static int _FindUsingInsertIndex(string scriptContent)
+        {
+            // 各層條件編譯區塊內的插入點 (索引 0 為區塊外，-1 表示該層尚無插入點)
+            List<int> insertIndexes = new List<int>() { -1 };
+
+            // 最近一次 #define 或 #undef 所在的層級 (-1 表示尚未出現)
+            int defineDepth = -1;
+
+            // 逐項比對標頭內容，遇到第一個不屬於標頭的內容 (namespace、型別宣告、Attribute 等) 即停止
+            for (Match item = Regex.Match(scriptContent, _HEADER_ITEM_PATTERN, RegexOptions.Singleline); item.Success; item = item.NextMatch())
+            {
+                int depth = insertIndexes.Count - 1;
+                int itemEnd = item.Index + item.Length;
+
+                if (item.Groups["using"].Success)
+                {
+                    insertIndexes[depth] = itemEnd;
+                    continue;
+                }
+
+                switch (item.Groups["directive"].Value)
+                {
+                    case "define":
+                    case "undef":
+                        insertIndexes[depth] = itemEnd;
+                        defineDepth = depth;
+                        break;
+
+                    case "if":
+                        insertIndexes.Add(-1);
+                        break;
+
+                    case "elif":
+                    case "else":
+                        // 切換分支後，先前分支內的 using 不再適用
+                        if (depth > 0)
+                            insertIndexes[depth] = (defineDepth == depth) ? itemEnd : -1;
+                        break;
+
+                    case "endif":
+                        if (depth > 0)
+                        {
+                            insertIndexes.RemoveAt(depth);
+
+                            // 區塊內含有 #define 或 #undef 時，插入點必須位於該區塊之後
+                            if (defineDepth == depth)
+                            {
+                                insertIndexes[depth - 1] = itemEnd;
+                                defineDepth = depth - 1;
+                            }
+                        }
+                        break;
+                }
+            }
+
+            // 由內而外，取仍在作用範圍內的最後一個插入點
+            for (int i = insertIndexes.Count - 1; i >= 0; i--)
+            {
+                if (insertIndexes[i] >= 0)
+                    return insertIndexes[i];
+            }
+
+            return 0;
         }
 
         /// <summary>
@@ -715,16 +1082,21 @@ namespace OxGFrame.CoreFrame.Editor
                 return null;
 
             // 嘗試通過反射訪問類型並獲取 MonoScript
-            MonoBehaviour dummyInstance = new GameObject("Dummy").AddComponent(type) as MonoBehaviour;
-            if (dummyInstance != null)
+            GameObject dummyGo = new GameObject("Dummy");
+            try
             {
-                MonoScript monoScript = MonoScript.FromMonoBehaviour(dummyInstance);
-                // 清理臨時對象
-                UnityEngine.Object.DestroyImmediate(dummyInstance.gameObject);
-                return monoScript;
-            }
+                MonoBehaviour dummyInstance = dummyGo.AddComponent(type) as MonoBehaviour;
+                if (dummyInstance != null)
+                    return MonoScript.FromMonoBehaviour(dummyInstance);
 
-            return null;
+                return null;
+            }
+            finally
+            {
+                // 清理臨時對象 (AddComponent 失敗或過程中拋出例外時也必須銷毀，避免殘留於場景中)
+                if (dummyGo != null)
+                    UnityEngine.Object.DestroyImmediate(dummyGo);
+            }
         }
 
         /// <summary>

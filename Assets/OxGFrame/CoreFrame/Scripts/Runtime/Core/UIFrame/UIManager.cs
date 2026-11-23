@@ -79,8 +79,14 @@ namespace OxGFrame.CoreFrame.UIFrame
         /// <param name="canvasName"></param>
         public bool SetupAndCheckUICanvas(string canvasName)
         {
-            if (this._dictUICanvas.ContainsKey(canvasName))
-                return true;
+            if (this._dictUICanvas.TryGetValue(canvasName, out var cachedUICanvas))
+            {
+                if (cachedUICanvas != null)
+                    return true;
+
+                // 緩存的 UICanvas 已被銷毀但參考殘留時 (ex: 銷毀連動流程異常中斷)，移除後重新查找與設置
+                this._dictUICanvas.Remove(canvasName);
+            }
 
             // 查找與 CanvasName 定義名稱一樣的 Canvas 物件
             GameObject goCanvas = null;
@@ -239,6 +245,28 @@ namespace OxGFrame.CoreFrame.UIFrame
                 sourceComponent.monoDrive = false;
             }
 
+            try
+            {
+                return this._InstantiateCore(sourceComponent, assetName, addIntoCache, parent);
+            }
+            finally
+            {
+                // 還原來源設置 (包含提前返回或流程拋出異常的情況，避免來源預製體的 monoDrive 未被還原)
+                if (sourceMonoDriveFlag)
+                    sourceComponent.monoDrive = true;
+            }
+        }
+
+        /// <summary>
+        /// 實例化的實際流程 (來源組件的 monoDrive 還原統一由 Instantiate 負責)
+        /// </summary>
+        /// <param name="sourceComponent"></param>
+        /// <param name="assetName"></param>
+        /// <param name="addIntoCache"></param>
+        /// <param name="parent"></param>
+        /// <returns></returns>
+        private UIBase _InstantiateCore(UIBase sourceComponent, string assetName, AddIntoCache addIntoCache, Transform parent)
+        {
             // 先從來源物件中取得 UIBase，需先取得 UICanvas 環境，後續 Instantiate 時才能取得正常比例
             UICanvas uiCanvas = null;
             // 先檢查與設置 UICanvas 環境
@@ -269,7 +297,7 @@ namespace OxGFrame.CoreFrame.UIFrame
             // Replace Name
             instGo.name = instGo.name.Replace("(Clone)", "");
             // 取得 UIBase 組件
-            uiBase = instGo.GetComponent<UIBase>();
+            UIBase uiBase = instGo.GetComponent<UIBase>();
             if (uiBase == null)
                 return null;
 
@@ -298,10 +326,6 @@ namespace OxGFrame.CoreFrame.UIFrame
 
             // 最後設置完畢後，關閉 GameObject 的 Active 為 false
             uiBase.gameObject.SetActive(false);
-
-            // 還原來源設置
-            if (sourceMonoDriveFlag)
-                sourceComponent.monoDrive = true;
 
             return uiBase;
         }
@@ -460,27 +484,41 @@ namespace OxGFrame.CoreFrame.UIFrame
             if (!string.IsNullOrEmpty(awaitingUIAssetName))
                 await this.ShowAwaiting(groupId, packageName, awaitingUIAssetName, awaitingUIExtraDuration, priority);
 
-            var uiBase = await this.LoadIntoAllCache(packageName, assetName, priority, progression, false);
-            if (uiBase == null)
+            // 是否由本次調用負責關閉預顯加載 UI
+            bool closeAwaiting = true;
+
+            try
             {
-                Logging.PrintError<Logger>($"UI -> Asset not found at path or name: {assetName}");
-                return null;
+                // 需傳遞 parent，否則調用端指定的自訂父節點不會生效 (parent 僅於實例化時套用，與 SRFrame 一致)
+                var uiBase = await this.LoadIntoAllCache(packageName, assetName, priority, progression, false, parent);
+                if (uiBase == null)
+                {
+                    // 如果該資源仍在加載中 (由另一次調用發起)，預顯加載 UI 交由該次調用於完成時關閉
+                    if (this.HasInLoadingFlags(assetName))
+                        closeAwaiting = false;
+
+                    Logging.PrintError<Logger>($"UI -> Asset not found at path or name: {assetName}");
+                    return null;
+                }
+
+                uiBase.SetGroupId(groupId);
+                uiBase.SetHidden(false);
+                await this.LoadAndDisplay(uiBase, obj);
+                // StackByStack
+                this.PushStackByStack(uiBase);
+                // Reverse
+                this.LoadAndDisplayReverse(uiBase, obj);
+
+                Logging.PrintInfo<Logger>($"Show UI: {assetName}");
+
+                return uiBase;
             }
-
-            uiBase.SetGroupId(groupId);
-            uiBase.SetHidden(false);
-            await this.LoadAndDisplay(uiBase, obj);
-            // StackByStack
-            this.PushStackByStack(uiBase);
-            // Reverse
-            this.LoadAndDisplayReverse(uiBase, obj);
-
-            Logging.PrintInfo<Logger>($"Show UI: {assetName}");
-
-            // 執行完畢後，關閉預顯加載 UI
-            this.CloseAwaiting(awaitingUIAssetName);
-
-            return uiBase;
+            finally
+            {
+                // 執行完畢後，關閉預顯加載 UI (包含加載失敗或流程拋出異常的情況，避免預顯加載 UI 殘留於畫面上)
+                if (closeAwaiting)
+                    this.CloseAwaiting(awaitingUIAssetName);
+            }
         }
         #endregion
 
@@ -607,6 +645,10 @@ namespace OxGFrame.CoreFrame.UIFrame
                             Logging.Print<Logger>($"[Pre-ForceDestroy Process] Remove {uiBase.assetName} from >> StackByStack cache <<.");
                         }
                     }
+
+                    // 移除後若清單為空，必須一併移除 Key (PushStackByStack 僅會加入至非空清單，殘留空清單會導致後續的 StackByStack 記錄全數失效)
+                    if (this._dictStackByStack[key].Count == 0)
+                        this._dictStackByStack.Remove(key);
                 }
             }
         }
@@ -717,7 +759,7 @@ namespace OxGFrame.CoreFrame.UIFrame
 
                 // 檢查排除執行的 UI
                 bool checkWithout = false;
-                if (withoutAssetNames.Length > 0)
+                if (withoutAssetNames != null && withoutAssetNames.Length > 0)
                 {
                     for (int i = 0; i < withoutAssetNames.Length; i++)
                     {
@@ -782,7 +824,8 @@ namespace OxGFrame.CoreFrame.UIFrame
             }
 
             FrameStack<UIBase> stack = this.GetStackFromAllCache(assetName);
-            foreach (var uiBase in stack.cache)
+            // 需要注意緩存需要 temp 出來，因為回調中若關閉或銷毀物件會直接對緩存進行操作而出錯
+            foreach (var uiBase in stack.cache.ToArray())
             {
                 if (!uiBase.isHidden)
                     return;
@@ -846,7 +889,8 @@ namespace OxGFrame.CoreFrame.UIFrame
             if (!this.CheckIsShowing(stack.Peek()))
                 return;
 
-            foreach (var uiBase in stack.cache)
+            // 需要注意緩存需要 temp 出來，因為回調中若關閉或銷毀物件會直接對緩存進行操作而出錯
+            foreach (var uiBase in stack.cache.ToArray())
             {
                 uiBase.SetHidden(true);
                 this.ExitAndHide(uiBase);
@@ -883,7 +927,7 @@ namespace OxGFrame.CoreFrame.UIFrame
 
                 // 檢查排除執行的 UI
                 bool checkWithout = false;
-                if (withoutAssetNames.Length > 0)
+                if (withoutAssetNames != null && withoutAssetNames.Length > 0)
                 {
                     for (int i = 0; i < withoutAssetNames.Length; i++)
                     {
@@ -995,6 +1039,15 @@ namespace OxGFrame.CoreFrame.UIFrame
                 {
                     if (this._dictReverse[key].Count > 0)
                     {
+                        // 如果該 UI 實例已位於 Reverse 最上層 (ex: Hide 後再次 Show)，僅更新數據不重複加入
+                        // (否則倒數第二個會是自己，導致剛顯示就被自身的反切流程關閉)
+                        int topIdx = this._dictReverse[key].Count - 1;
+                        if (this._dictReverse[key][topIdx].uiBase.Equals(uiBase))
+                        {
+                            this._dictReverse[key][topIdx] = new ReverseCache() { uiBase = uiBase, data = data, extraStack = 0 };
+                            return;
+                        }
+
                         // 如果當前 UI 是 Reverse 模式，則加入緩存
                         this._dictReverse[key].Add(new ReverseCache() { uiBase = uiBase, data = data, extraStack = 0 });
 

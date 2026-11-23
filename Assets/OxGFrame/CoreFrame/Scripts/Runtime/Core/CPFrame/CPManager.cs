@@ -124,7 +124,13 @@ namespace OxGFrame.CoreFrame.CPFrame
 
             T cpBase = instGo.GetComponent<T>();
             if (cpBase == null)
+            {
+                // 查無對應組件時，需銷毀已實例化的物件並釋放資源引用，避免物件殘留於場景且引用計數無法歸還
+                Logging.PrintError<Logger>($"CP -> Component <{typeof(T).Name}> not found on asset: {assetName}");
+                GameObject.Destroy(instGo);
+                AssetLoaders.UnloadAsset(assetName);
                 return null;
+            }
 
             // 激活檢查，如果主體 Active 為 false 必須打開
             bool active = instGo.activeSelf;
@@ -194,7 +200,13 @@ namespace OxGFrame.CoreFrame.CPFrame
 
             T cpBase = instGo.GetComponent<T>();
             if (cpBase == null)
+            {
+                // 查無對應組件時，需銷毀已實例化的物件並釋放資源引用，避免物件殘留於場景且引用計數無法歸還
+                Logging.PrintError<Logger>($"CP -> Component <{typeof(T).Name}> not found on asset: {assetName}");
+                GameObject.Destroy(instGo);
+                AssetLoaders.UnloadAsset(assetName);
                 return null;
+            }
 
             // 激活檢查，如果主體 Active 為 false 必須打開
             bool active = instGo.activeSelf;

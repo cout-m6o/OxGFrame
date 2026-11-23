@@ -145,6 +145,16 @@ namespace OxGFrame.CoreFrame
         /// </summary>
         protected HashSet<string> _loadingFlags = new HashSet<string>();
 
+        /// <summary>
+        /// DriveUpdates 用的 Key 快照緩衝 (重複使用，避免每幀配置)
+        /// </summary>
+        private readonly List<string> _driveKeysBuffer = new List<string>();
+
+        /// <summary>
+        /// Key 快照緩衝是否使用中 (防護巢狀調用)
+        /// </summary>
+        private bool _isDriveKeysBufferInUse = false;
+
         private static float _dt;
         private static float _fdt;
 
@@ -178,41 +188,61 @@ namespace OxGFrame.CoreFrame
                 return;
 
             int fStackCount = this._dictAllCache.Count;
-            string[] fKeysSnapshot = this._dictAllCache.Keys.ToArray();
 
-            foreach (var fKey in fKeysSnapshot)
+            // 重複使用緩衝清單作為 Key 快照，避免每次驅動都配置新陣列 (Update / FixedUpdate / LateUpdate 每幀皆會調用)
+            // ※備註：若發生巢狀調用 (緩衝使用中)，則退回配置臨時清單，確保外層遍歷不受影響
+            bool useBuffer = !this._isDriveKeysBufferInUse;
+            List<string> fKeysSnapshot = useBuffer ? this._driveKeysBuffer : new List<string>(fStackCount);
+            if (useBuffer)
             {
-                if (this._dictAllCache.Count != fStackCount)
-                    break;
+                this._isDriveKeysBufferInUse = true;
+                fKeysSnapshot.Clear();
+            }
 
-                if (!this._dictAllCache.TryGetValue(fKey, out var fStack))
-                    continue;
+            try
+            {
+                foreach (var pair in this._dictAllCache)
+                    fKeysSnapshot.Add(pair.Key);
 
-                int fBaseCount = fStack.Count();
-
-                for (int i = 0; i < fBaseCount; i++)
+                for (int k = 0; k < fKeysSnapshot.Count; k++)
                 {
-                    if (fStack.Count() != fBaseCount)
+                    if (this._dictAllCache.Count != fStackCount)
                         break;
 
-                    var fBase = fStack.cache[i];
-
-                    if (!this.CheckIsShowing(fBase))
+                    if (!this._dictAllCache.TryGetValue(fKeysSnapshot[k], out var fStack))
                         continue;
 
-                    switch (updateType)
+                    int fBaseCount = fStack.Count();
+
+                    for (int i = 0; i < fBaseCount; i++)
                     {
-                        case UpdateType.Update:
-                            fBase.HandleUpdate(_dt);
+                        if (fStack.Count() != fBaseCount)
                             break;
-                        case UpdateType.FixedUpdate:
-                            fBase.HandleFixedUpdate(_fdt);
-                            break;
-                        case UpdateType.LateUpdate:
-                            fBase.HandleLateUpdate(_dt);
-                            break;
+
+                        var fBase = fStack.cache[i];
+
+                        if (!this.CheckIsShowing(fBase))
+                            continue;
+
+                        switch (updateType)
+                        {
+                            case UpdateType.Update:
+                                fBase.HandleUpdate(_dt);
+                                break;
+                            case UpdateType.FixedUpdate:
+                                fBase.HandleFixedUpdate(_fdt);
+                                break;
+                            case UpdateType.LateUpdate:
+                                fBase.HandleLateUpdate(_dt);
+                                break;
+                        }
                     }
                 }
+            }
+            finally
+            {
+                if (useBuffer)
+                    this._isDriveKeysBufferInUse = false;
             }
         }
 
@@ -410,6 +440,34 @@ namespace OxGFrame.CoreFrame
                 return null;
             }
 
+            T fBase = null;
+
+            try
+            {
+                fBase = await this._LoadIntoAllCacheCore(packageName, assetName, priority, progression, isPreloadMode, parent);
+            }
+            finally
+            {
+                // 移除加載標記 (包含加載或實例化過程拋出異常的情況，避免標記殘留導致該資源之後永遠被判定為加載中)
+                // ※備註：方法開頭已排除標記存在的情況，因此此處的標記必定是由本次調用所添加
+                if (this.HasInLoadingFlags(assetName)) this._loadingFlags.Remove(assetName);
+            }
+
+            return fBase;
+        }
+
+        /// <summary>
+        /// 加載資源至緩存的實際流程 (加載標記統一由 LoadIntoAllCache 負責移除)
+        /// </summary>
+        /// <param name="packageName"></param>
+        /// <param name="assetName"></param>
+        /// <param name="priority"></param>
+        /// <param name="progression"></param>
+        /// <param name="isPreloadMode"></param>
+        /// <param name="parent"></param>
+        /// <returns></returns>
+        private async UniTask<T> _LoadIntoAllCacheCore(string packageName, string assetName, uint priority, Progression progression, bool isPreloadMode, Transform parent)
+        {
             GameObject asset;
             T fBase = null;
 
@@ -505,9 +563,6 @@ namespace OxGFrame.CoreFrame
                 }
             }
 
-            // 移除加載標記
-            if (this.HasInLoadingFlags(assetName)) this._loadingFlags.Remove(assetName);
-
             return fBase;
         }
 
@@ -563,7 +618,31 @@ namespace OxGFrame.CoreFrame
         {
             var ui = await UIFrame.UIManager.GetInstance().Show(groupId, packageName, assetName, null, null, 0f, priority);
             if (ui != null && awaitingUIExtraDuration > 0f)
-                await UniTask.Delay(TimeSpan.FromSeconds(awaitingUIExtraDuration));
+                await _WaitAwaitingExtraDuration(awaitingUIExtraDuration);
+        }
+
+        /// <summary>
+        /// 等待預顯加載 UI 的額外顯示時間
+        /// <para> ※備註：TimeScale 為 0 時 deltaTime 恆為 0 (等待永遠不會結束)，因此該期間改以 unscaledDeltaTime 計時，其餘情況維持以 deltaTime 計時 (計時方式與 UniTask.Delay 相同) </para>
+        /// </summary>
+        /// <param name="seconds"></param>
+        /// <returns></returns>
+        private static async UniTask _WaitAwaitingExtraDuration(float seconds)
+        {
+            int initialFrame = Time.frameCount;
+            float elapsed = 0f;
+
+            do
+            {
+                await UniTask.Yield(PlayerLoopTiming.Update);
+
+                // 開始等待的當幀不列入計時
+                if (elapsed == 0f &&
+                    Time.frameCount == initialFrame)
+                    continue;
+
+                elapsed += (Time.timeScale == 0f) ? Time.unscaledDeltaTime : Time.deltaTime;
+            } while (elapsed < seconds);
         }
 
         /// <summary>
@@ -711,14 +790,31 @@ namespace OxGFrame.CoreFrame
                             if (this.CheckIsShowing(stack.Peek()) ||
                                 this.CheckIsHiding(stack.Peek()))
                             {
-                                foreach (var fBase in stack.cache)
-                                {
-                                    fBase.OnReceiveAndRefresh(data);
-                                }
+                                this._RefreshStack(stack, data);
                             }
                         }
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// 刷新 Stack 中的所有物件
+        /// <para> 以快照進行遍歷，避免刷新回調中關閉或銷毀物件而改動緩存集合 (遍歷期間改動集合會拋出 InvalidOperationException) </para>
+        /// </summary>
+        /// <param name="stack"></param>
+        /// <param name="data"></param>
+        private void _RefreshStack(FrameStack<T> stack, object data)
+        {
+            T[] fBases = stack.cache.ToArray();
+            foreach (var fBase in fBases)
+            {
+                // 已於先前的回調中被移出緩存 (已銷毀) 則略過
+                if (stack.cache.Count != fBases.Length &&
+                    !stack.cache.Contains(fBase))
+                    continue;
+
+                fBase.OnReceiveAndRefresh(data);
             }
         }
 
@@ -729,7 +825,8 @@ namespace OxGFrame.CoreFrame
         /// <param name="specificRefreshInfos"></param>
         public void SendRefreshDataToAll(object obj, RefreshInfo[] specificRefreshInfos)
         {
-            foreach (FrameStack<T> stack in this._dictAllCache.Values)
+            // 需要注意緩存需要 temp 出來，因為刷新回調中若關閉或銷毀物件會直接對緩存進行操作而出錯
+            foreach (FrameStack<T> stack in this._dictAllCache.Values.ToArray())
             {
                 if (stack != null)
                 {
@@ -744,10 +841,7 @@ namespace OxGFrame.CoreFrame
                                 if (this.CheckIsShowing(stack.Peek()) ||
                                     this.CheckIsHiding(stack.Peek()))
                                 {
-                                    foreach (var fBase in stack.cache)
-                                    {
-                                        fBase.OnReceiveAndRefresh(specificRefreshInfos[i].data);
-                                    }
+                                    this._RefreshStack(stack, specificRefreshInfos[i].data);
                                 }
                                 doSpecific = true;
                                 break;
@@ -761,10 +855,7 @@ namespace OxGFrame.CoreFrame
                     if (this.CheckIsShowing(stack.Peek()) ||
                         this.CheckIsHiding(stack.Peek()))
                     {
-                        foreach (var fBase in stack.cache)
-                        {
-                            fBase.OnReceiveAndRefresh(obj);
-                        }
+                        this._RefreshStack(stack, obj);
                     }
                 }
             }
