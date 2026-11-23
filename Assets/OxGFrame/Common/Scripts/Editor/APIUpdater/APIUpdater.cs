@@ -84,6 +84,11 @@ namespace OxGFrame.Common.Editor
             $"{nameof(APIUpdaterAutoCheck)}.cs"
         };
 
+        /// <summary>
+        /// 嚴格的 UTF-8 解碼器 (遇到無效位元組時拋出例外，而非以取代字元 U+FFFD 代替)
+        /// </summary>
+        private static readonly UTF8Encoding _STRICT_UTF8_ENCODING = new UTF8Encoding(false, true);
+
         #region MenuItem
         [MenuItem("OxGFrame/Others/API Updater (Scan and update deprecated APIs)", false, 999)]
         public static void OpenAPIUpdater()
@@ -150,9 +155,10 @@ namespace OxGFrame.Common.Editor
                     continue;
 
                 string content;
+                bool isValidUtf8;
                 try
                 {
-                    content = File.ReadAllText(assetPath);
+                    content = _ReadAllText(assetPath, out isValidUtf8);
                 }
                 catch
                 {
@@ -172,6 +178,9 @@ namespace OxGFrame.Common.Editor
 
                 // 同一位置僅保留先到的規則，避免重複替換
                 var occupiedSpans = new HashSet<long>();
+
+                // 該檔案的匹配起點 (非 UTF-8 編碼的檔案於比對後整批移除)
+                int fileMatchStartIndex = result.matches.Count;
 
                 foreach (var rule in hitRules)
                 {
@@ -205,6 +214,10 @@ namespace OxGFrame.Common.Editor
                     try
                     {
                         regexMatches = rule.GetRegex().Matches(content);
+
+                        // Matches 為延遲求值，必須於 try 內讀取 Count 完成比對，逾時例外才會被下方攔截
+                        if (regexMatches.Count == 0)
+                            continue;
                     }
                     catch (RegexMatchTimeoutException)
                     {
@@ -255,6 +268,15 @@ namespace OxGFrame.Common.Editor
                             selected = !needsReview
                         });
                     }
+                }
+
+                // 非 UTF-8 編碼的腳本 (例如 Big5、GBK、Shift-JIS) 寫回時會永久損毀非 ASCII 字元，其匹配不列入結果並提示使用者
+                if (!isValidUtf8 &&
+                    result.matches.Count > fileMatchStartIndex)
+                {
+                    int ignoredMatchCount = result.matches.Count - fileMatchStartIndex;
+                    result.matches.RemoveRange(fileMatchStartIndex, ignoredMatchCount);
+                    Debug.LogWarning($"[OxGFrame] APIUpdater: {assetPath} is not valid UTF-8, skipped ({ignoredMatchCount} match(es) ignored). Convert the file to UTF-8 and scan again to update it.");
                 }
             }
 
@@ -362,9 +384,10 @@ namespace OxGFrame.Common.Editor
                 string assetPath = group.Key;
 
                 string content;
+                bool isValidUtf8;
                 try
                 {
-                    content = File.ReadAllText(assetPath);
+                    content = _ReadAllText(assetPath, out isValidUtf8);
                 }
                 catch (Exception ex)
                 {
@@ -372,9 +395,21 @@ namespace OxGFrame.Common.Editor
                     continue;
                 }
 
+                // 非 UTF-8 編碼的檔案絕不寫回 (無效位元組已被解碼為取代字元，寫回會永久損毀原始內容)
+                if (!isValidUtf8)
+                {
+                    result.skippedCount += group.Count();
+                    Debug.LogWarning($"[OxGFrame] APIUpdater: {assetPath} is not valid UTF-8, skipped.");
+                    continue;
+                }
+
                 // 保留原始檔案的 BOM 狀態 (換行符不做任何正規化)
                 bool hasBom = _HasBom(assetPath);
                 bool dirty = false;
+
+                // 該檔案的替換數量與紀錄 (寫入成功後才計入結果，避免寫入失敗仍被回報為已套用)
+                int fileAppliedCount = 0;
+                var fileLogBuilder = new StringBuilder();
 
                 // 由後往前替換，避免索引位移
                 foreach (var match in group.OrderByDescending(match => match.startIndex))
@@ -399,9 +434,9 @@ namespace OxGFrame.Common.Editor
                     }
 
                     content = content.Remove(match.startIndex, match.length).Insert(match.startIndex, effectiveNewApi);
-                    result.appliedCount++;
+                    fileAppliedCount++;
                     dirty = true;
-                    logBuilder.AppendLine($"Updated: {assetPath}:{match.lineNumber} => {match.rule.oldApi} -> {effectiveNewApi}");
+                    fileLogBuilder.AppendLine($"Updated: {assetPath}:{match.lineNumber} => {match.rule.oldApi} -> {effectiveNewApi}");
                 }
 
                 if (!dirty)
@@ -410,12 +445,17 @@ namespace OxGFrame.Common.Editor
                 try
                 {
                     File.WriteAllText(assetPath, content, new UTF8Encoding(hasBom));
-                    result.changedFileCount++;
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogException(ex);
+                    // 寫入失敗 (唯讀檔案、版控鎖定等) 時不計入結果，並繼續處理其餘檔案
+                    Debug.LogError($"[OxGFrame] APIUpdater: Failed to write {assetPath}, {fileAppliedCount} update(s) were not applied. ({ex.GetType().Name}: {ex.Message})");
+                    continue;
                 }
+
+                result.appliedCount += fileAppliedCount;
+                result.changedFileCount++;
+                logBuilder.Append(fileLogBuilder.ToString());
             }
 
             logBuilder.AppendLine($"API update completed. Applied: {result.appliedCount}, Skipped: {result.skippedCount}, Changed files: {result.changedFileCount}.");
@@ -599,6 +639,35 @@ namespace OxGFrame.Common.Editor
             {
                 /* Nothing to do */
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// 讀取檔案內容 (解碼結果與 File.ReadAllText 相同)，並檢查內容是否為合法的 UTF-8
+        /// <para>非 UTF-8 編碼的檔案 (例如 Big5、GBK、Shift-JIS 或帶 BOM 的 UTF-16) 其無效位元組會被解碼為取代字元，內容僅可用於比對，絕不可寫回。</para>
+        /// </summary>
+        /// <param name="filePath"></param>
+        /// <param name="isValidUtf8"></param>
+        /// <returns></returns>
+        private static string _ReadAllText(string filePath, out bool isValidUtf8)
+        {
+            byte[] bytes = File.ReadAllBytes(filePath);
+
+            // 略過 UTF-8 BOM
+            int offset = (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) ? 3 : 0;
+
+            try
+            {
+                string content = _STRICT_UTF8_ENCODING.GetString(bytes, offset, bytes.Length - offset);
+                isValidUtf8 = true;
+                return content;
+            }
+            catch (DecoderFallbackException)
+            {
+                // 含有無效的 UTF-8 位元組，改以與 File.ReadAllText 相同的方式解碼 (依 BOM 偵測編碼，無效位元組以取代字元代替)
+                isValidUtf8 = false;
+                using (var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, true))
+                    return reader.ReadToEnd();
             }
         }
 

@@ -31,7 +31,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <param name="timeoutSeconds"></param>
         public static void Acax(string url, string method, string[,] headers, object[,] body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             RequestAPI(url, method, headers, body, success, error, timeoutSeconds).Forget();
         }
 
@@ -48,7 +48,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <param name="timeoutSeconds"></param>
         public static void Acax(string url, string method, string[,] headers, object body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             RequestAPI(url, method, headers, body, success, error, timeoutSeconds).Forget();
         }
 
@@ -66,7 +66,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <returns></returns>
         public async static UniTask<string> AcaxAsync(string url, string method, string[,] headers, object[,] body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             return await RequestAPI(url, method, headers, body, success, error, timeoutSeconds);
         }
 
@@ -84,7 +84,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <returns></returns>
         public async static UniTask<string> AcaxAsync(string url, string method, string[,] headers, object body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             return await RequestAPI(url, method, headers, body, success, error, timeoutSeconds);
         }
 
@@ -115,7 +115,7 @@ namespace OxGFrame.CenterFrame.APICenter
                         }
                         else
                         {
-                            request.Headers.Add(headerName, headerValue);
+                            _SetRequestHeader(request, headerName, headerValue);
                         }
                     }
                 }
@@ -175,6 +175,55 @@ namespace OxGFrame.CenterFrame.APICenter
                 error?.Invoke(errorInfo);
                 Logging.PrintError<Logger>($"RequestAPI failed. URL: {errorInfo.url}, ErrorMsg: {errorInfo.message}, Exception: {ex}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// 設置請求標頭
+        /// <para> HttpWebRequest 的受限標頭 (Restricted Headers) 無法透過 Headers.Add 設置，會拋出 ArgumentException 導致整個請求失敗，因此常用的受限標頭需改由對應的屬性進行設置 </para>
+        /// </summary>
+        /// <param name="request"></param>
+        /// <param name="headerName"></param>
+        /// <param name="headerValue"></param>
+        private static void _SetRequestHeader(HttpWebRequest request, string headerName, string headerValue)
+        {
+            if (!WebHeaderCollection.IsRestricted(headerName))
+            {
+                request.Headers.Add(headerName, headerValue);
+                return;
+            }
+
+            if (headerName.Equals("Accept", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Accept = headerValue;
+            }
+            else if (headerName.Equals("User-Agent", StringComparison.OrdinalIgnoreCase))
+            {
+                request.UserAgent = headerValue;
+            }
+            else if (headerName.Equals("Referer", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Referer = headerValue;
+            }
+            else if (headerName.Equals("Host", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Host = headerValue;
+            }
+            else if (headerName.Equals("Connection", StringComparison.OrdinalIgnoreCase))
+            {
+                // Keep-Alive 與 Close 無法透過 Connection 屬性設置，需改由 KeepAlive 屬性控制
+                string connection = (headerValue != null) ? headerValue.Trim() : string.Empty;
+                if (connection.Equals("keep-alive", StringComparison.OrdinalIgnoreCase))
+                    request.KeepAlive = true;
+                else if (connection.Equals("close", StringComparison.OrdinalIgnoreCase))
+                    request.KeepAlive = false;
+                else
+                    request.Connection = headerValue;
+            }
+            else
+            {
+                // 其餘的受限標頭維持原行為 (由 Headers.Add 拋出異常，交由外層的錯誤處理回調)
+                request.Headers.Add(headerName, headerValue);
             }
         }
         #endregion

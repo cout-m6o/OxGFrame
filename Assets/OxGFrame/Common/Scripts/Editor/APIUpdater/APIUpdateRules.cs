@@ -193,7 +193,7 @@ namespace OxGFrame.Common.Editor
                         // 靜態成員必須帶型別前綴; 允許的前綴為宣告型別本身與其所有衍生型別 (C# 可透過衍生型別名稱呼叫繼承的靜態成員)
                         if (rule.declaringType == null)
                         {
-                            rule.description = $"{rule.description}\nCannot resolve the declaring type, so the qualified usage cannot be verified.";
+                            _AppendDescriptionNote(rule, "Cannot resolve the declaring type, so the qualified usage cannot be verified.");
                             manualOnlyRules.Add(rule);
                             return;
                         }
@@ -207,7 +207,7 @@ namespace OxGFrame.Common.Editor
                         // 需要宣告型別才能驗證使用者類別的衍生關係
                         if (rule.declaringType == null)
                         {
-                            rule.description = $"{rule.description}\nCannot resolve the declaring type, so subclass usage cannot be verified.";
+                            _AppendDescriptionNote(rule, "Cannot resolve the declaring type, so subclass usage cannot be verified.");
                             manualOnlyRules.Add(rule);
                             return;
                         }
@@ -230,7 +230,7 @@ namespace OxGFrame.Common.Editor
                         // 常見名稱在缺乏型別上下文時不予比對
                         if (rule.isCommonName)
                         {
-                            rule.description = $"{rule.description}\nThe name is too common to be matched safely without type context.";
+                            _AppendDescriptionNote(rule, "The name is too common to be matched safely without type context.");
                             manualOnlyRules.Add(rule);
                             return;
                         }
@@ -242,6 +242,21 @@ namespace OxGFrame.Common.Editor
                     rules.Add(rule);
                     return;
             }
+        }
+
+        /// <summary>
+        /// 於規則說明後附加備註
+        /// <para>手動補充表的規則為靜態共用實例，每次掃描都會重新分派，已附加過的備註不可重複累加。</para>
+        /// </summary>
+        /// <param name="rule"></param>
+        /// <param name="note"></param>
+        private static void _AppendDescriptionNote(APIUpdateRule rule, string note)
+        {
+            if (!string.IsNullOrEmpty(rule.description) &&
+                rule.description.IndexOf(note, StringComparison.Ordinal) >= 0)
+                return;
+
+            rule.description = $"{rule.description}\n{note}";
         }
 
         /// <summary>

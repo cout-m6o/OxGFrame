@@ -38,7 +38,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <param name="timeoutSeconds"></param>
         public static void Acax(string url, string method, string[,] headers, object[,] body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             RequestAPI(url, method, headers, body, success, error, timeoutSeconds).Forget();
         }
 
@@ -55,7 +55,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <param name="timeoutSeconds"></param>
         public static void Acax(string url, string method, string[,] headers, object body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             RequestAPI(url, method, headers, body, success, error, timeoutSeconds).Forget();
         }
 
@@ -73,7 +73,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <returns></returns>
         public static async UniTask<string> AcaxAsync(string url, string method, string[,] headers, object[,] body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             return await RequestAPI(url, method, headers, body, success, error, timeoutSeconds);
         }
 
@@ -91,7 +91,7 @@ namespace OxGFrame.CenterFrame.APICenter
         /// <returns></returns>
         public static async UniTask<string> AcaxAsync(string url, string method, string[,] headers, object body, ResponseHandle success = null, ResponseErrorHandle error = null, int? timeoutSeconds = null)
         {
-            method = method.ToUpper();
+            method = method.ToUpperInvariant();
             return await RequestAPI(url, method, headers, body, success, error, timeoutSeconds);
         }
 
@@ -158,7 +158,11 @@ namespace OxGFrame.CenterFrame.APICenter
                 }
 
                 if (_client == null)
+                {
                     _client = new HttpClient();
+                    // HttpClient 預設的逾時為 100 秒，會使超過 100 秒的 timeoutSeconds 設置失效，因此統一改由每次請求的 CTS 控制逾時
+                    _client.Timeout = Timeout.InfiniteTimeSpan;
+                }
 
                 // Start send request
                 using var response = await _client.SendAsync(request, cts.Token);
