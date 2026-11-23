@@ -2,7 +2,7 @@
 
 ## GSIFrame — game stage state machine
 
-Namespace `OxGFrame.GSIFrame`. Define a manager (`GSIManagerBase<T>` singleton) that registers stages (`GSIBase`) in its constructor, and drive it from one MonoBehaviour.
+Namespace `OxGFrame.GSIFrame`. Define a manager (`GSIManagerBase<T>` singleton) that registers stages (`GSIBase`) in its constructor, and drive it from one MonoBehaviour. Create the manager and stage scripts from the framework templates (`Assets/Create/OxGFrame/GSI Frame/Template Scripts/...`, see `editor-tools.md`); the code below shows what they look like once filled in.
 
 ```csharp
 public class GSIManagerExample : GSIManagerBase<GSIManagerExample>
@@ -81,9 +81,11 @@ NetFrames.GetNetNode((int)NNID.KCP).GetNetProvider<KcpNetProvider>()
 
 `INetTips` (connection feedback for UI): `OnConnecting()`, `OnConnected(object)`, `OnConnectionError(object)`, `OnDisconnected(object)`, `OnReconnecting()`. `autoReconnectCount: -1` disables auto-reconnect.
 
+Closing: `NetFrames.Close(id)` is a manual close — it never triggers auto-reconnect; the node reports `OnDisconnected` and can `Connect` again afterwards (for TCP since v3.7.1 — earlier versions left the node stuck in the connected state). A connection dropped by the remote side goes through `OnDisconnected` → `OnReconnecting` and the reconnect ticker while `autoReconnectCount` allows it; since v3.7.1 the TCP provider reports each drop once (earlier versions could report it twice), still keep those handlers idempotent. Since v3.7.1 a node may be removed from inside one of its own callbacks.
+
 ## CenterFrame — API / Event registries
 
-Namespace `OxGFrame.CenterFrame` (+ `.APICenter` / `.EventCenter`). One generic base serves both: subclass `CenterBase<TCenter, APIBase>` or `CenterBase<TCenter, EventBase>`; register in the constructor; call `Find<T>()` from anywhere. Ids default to `typeof(T).GetHashCode()`; explicit ids (hex convention `0x01`) are supported.
+Namespace `OxGFrame.CenterFrame` (+ `.APICenter` / `.EventCenter`). One generic base serves both: subclass `CenterBase<TCenter, APIBase>` or `CenterBase<TCenter, EventBase>`; register in the constructor; call `Find<T>()` from anywhere. Ids default to `typeof(T).GetHashCode()`; explicit ids (hex convention `0x01`) are supported. Create center / API / event scripts from the framework templates (`Assets/Create/OxGFrame/Center Frame/...`, see `editor-tools.md`).
 
 ### APICenter
 

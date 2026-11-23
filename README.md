@@ -2,7 +2,7 @@
   <img width="384" height="384" src="Docs/OxGFrame_Logo_v2.png">
 </p>
 
-[![License](https://img.shields.io/github/license/michael811125/OxGFrame)](https://github.com/michael811125/OxGFrame/blob/master/LICENSE.md)
+[![License](https://img.shields.io/github/license/cout-m6o/OxGFrame)](https://github.com/cout-m6o/OxGFrame/blob/master/LICENSE.md)
 
 ---
 
@@ -19,7 +19,7 @@
 
 OxGFrame 是基於 Unity 用於加快遊戲開發的框架，並且使用 UniTask 進行異步處理，從資源加載 (AssetLoader)、遊戲介面 (UIFrame)、場景資源 (SRFrame)、Unity 場景 (USFrame)、模板物件 (CPFrame)、音樂音效 (AudioFrame)、影片 (VideoFrame)、遊戲階段整合 (GSIFrame)、網路 (NetFrame)、事件中心 (CenterFrame)，能夠簡單入手與有效的加快開發效率，並且支持多平台 Win、OSX、Android、iOS、WebGL (皆通過測試)。
 
-https://github.com/michael811125/OxGFrame/assets/30960759/fd04f6e5-6338-400c-9f57-dcdbdf73dfff
+https://github.com/cout-m6o/OxGFrame/assets/30960759/fd04f6e5-6338-400c-9f57-dcdbdf73dfff
 
 相關模板建立的選單 (Create menu items)
 
@@ -38,12 +38,18 @@ https://github.com/michael811125/OxGFrame/assets/30960759/fd04f6e5-6338-400c-9f5
 ### YooAsset 版本
 
 - 同時相容 YooAsset 2.x 與 YooAsset 3.x，依安裝版本自動定義 `YOOASSET_2` / `YOOASSET_3` 切換代碼 (Assembly Version Defines)。
-- 已驗證版本：2.3.18、2.3.19、3.0.3-beta、3.0.4、3.0.5 (**建議使用 3.0.5+**)。
+- 已驗證版本：2.3.18、2.3.19、3.0.3-beta、3.0.4、3.0.5、3.0.6、3.0.7 (**建議使用 3.0.5+**)。
 - ※注意 : v2 與 v3 建置的 Bundle 互不相容，切換版本後需重新建置資源。
+
+### HybridCLR 版本
+
+- 同時相容 HybridCLR 8.x 與 HybridCLR 9.x，依安裝版本自動定義 `HYBRIDCLR_9_OR_NEWER` 切換代碼 (Assembly Version Defines)。
+- 已驗證版本：8.12.0、9.1.0。
+- ※注意 : HybridCLR 9.x 不再支援 Unity 2021 (Unity 2021.3 請使用 8.x)，且移除了 HybridCLR Settings 的 `Patch AOT Assemblies` 設置，因此 9.x 需補充元數據的 AOT DLL 清單改為取自 HybridCLR 生成的 `AOTGenericReferences.cs` (`PatchedAOTAssemblyList`)，請先執行 HybridCLR/Generate/All 再進行拷貝。
 
 ### 依賴的工具庫
 
-- [OxGKit](https://github.com/michael811125/OxGKit)
+- [OxGKit](https://github.com/cout-m6o/OxGKit)
 
 ---
 
@@ -63,7 +69,7 @@ https://github.com/michael811125/OxGFrame/assets/30960759/fd04f6e5-6338-400c-9f5
 
 ### AssetLoader (dependence YooAsset)
 
-資源加載器模塊，支援動態 Async 或 Sync 加載與計數管理 (Resources 與 AssetBundle 成對 Load & Unload)。AssetBundle 集成 YooAsset 實現資源熱更新方案，支援 App 與 DLC 分包管理 (PackageOperation)、群組分包下載、磁碟空間檢查、下載途中直接修復，並實現 YooAsset 加解密介面：Offset、XOR、HT2XOR、HT2XOR-Plus、AES、ChaCha20、XXTEA、OffsetXOR ([加解密效率比較](https://github.com/michael811125/OxGFrame/wiki/Encryption-and-Decryption-Efficiency-Reference))。
+資源加載器模塊，支援動態 Async 或 Sync 加載與計數管理 (Resources 與 AssetBundle 成對 Load & Unload)。AssetBundle 集成 YooAsset 實現資源熱更新方案，支援 App 與 DLC 分包管理 (PackageOperation)、群組分包下載、磁碟空間檢查、下載途中直接修復，並實現 YooAsset 加解密介面：Offset、XOR、HT2XOR、HT2XOR-Plus、AES、ChaCha20、XXTEA、OffsetXOR ([加解密效率比較](https://github.com/cout-m6o/OxGFrame/wiki/Encryption-and-Decryption-Efficiency-Reference))。
 
 - ※備註 : Use "res#" will load from Resources else load from Bundle
 - ※提醒 : 使用 Bundle 開發時，需先將 PatchLauncher 拖曳至場景中 (透過 Samples Import PatchLauncher Prefab)
@@ -74,7 +80,7 @@ https://github.com/michael811125/OxGFrame/assets/30960759/fd04f6e5-6338-400c-9f5
 
 #### 資源更新過程 (支援下載途中直接進行修復功能)
 
-https://github.com/michael811125/OxGFrame/assets/30960759/11dcf0d3-41bd-4a8d-af6b-7115374552f5
+https://github.com/cout-m6o/OxGFrame/assets/30960759/11dcf0d3-41bd-4a8d-af6b-7115374552f5
 
 #### Disk Space 檢查流程
 
@@ -88,7 +94,7 @@ https://github.com/michael811125/OxGFrame/assets/30960759/11dcf0d3-41bd-4a8d-af6
 
 #### 使用 PackageOperation 進行 DLC 資源包的操作
 
-https://github.com/michael811125/OxGFrame/assets/30960759/694d1125-cf9f-42bb-85f4-df42041057c7
+https://github.com/cout-m6o/OxGFrame/assets/30960759/694d1125-cf9f-42bb-85f4-df42041057c7
 
 ### CoreFrame (dependence AssetLoader)
 
@@ -125,11 +131,11 @@ https://github.com/michael811125/OxGFrame/assets/30960759/694d1125-cf9f-42bb-85f
 
 自動生成物件綁定代碼 (Hotkey: Shift+B) - 自動 (Auto)
 
-https://github.com/michael811125/OxGFrame/assets/30960759/4c61bede-0bbc-4cae-baba-4a9bc7274c2e
+https://github.com/cout-m6o/OxGFrame/assets/30960759/4c61bede-0bbc-4cae-baba-4a9bc7274c2e
 
 自動生成物件綁定代碼 (Hotkey: Shift+B) - 手動 (Manual)
 
-https://github.com/michael811125/OxGFrame/assets/30960759/8e4f63e9-b955-4f91-8ac7-be949677c54f
+https://github.com/cout-m6o/OxGFrame/assets/30960759/8e4f63e9-b955-4f91-8ac7-be949677c54f
 
 ### MediaFrame (dependence AssetLoader)
 
@@ -178,21 +184,21 @@ https://github.com/michael811125/OxGFrame/assets/30960759/8e4f63e9-b955-4f91-8ac
 
 ## 使用 OxGFrame 實現的 Demo 小遊戲
 
-[Github - FlappyBird_OxGFrame](https://github.com/michael811125/FlappyBird_OxGFrame)
-  - [Resources](https://github.com/michael811125/FlappyBird_OxGFrame/tree/resources)
-  - [AssetBundle](https://github.com/michael811125/FlappyBird_OxGFrame/tree/assetbundle)
-  - [AssetBundle + HybridCLR](https://github.com/michael811125/FlappyBird_OxGFrame/tree/assetbundle_clr)
+[Github - FlappyBird_OxGFrame](https://github.com/cout-m6o/FlappyBird_OxGFrame)
+  - [Resources](https://github.com/cout-m6o/FlappyBird_OxGFrame/tree/resources)
+  - [AssetBundle](https://github.com/cout-m6o/FlappyBird_OxGFrame/tree/assetbundle)
+  - [AssetBundle + HybridCLR](https://github.com/cout-m6o/FlappyBird_OxGFrame/tree/assetbundle_clr)
 
-https://github.com/michael811125/OxGFrame/assets/30960759/5e41e84a-029d-4392-8142-7199ce45018c
+https://github.com/cout-m6o/OxGFrame/assets/30960759/5e41e84a-029d-4392-8142-7199ce45018c
 
 ---
 
 ## Wiki
 
-- [Coding Style wiki (代碼風格)](https://github.com/michael811125/OxGFrame/wiki/Coding-Style)
-- [Macro Defitions wiki (宏定義)](https://github.com/michael811125/OxGFrame/wiki/Macro-Definitions)
-- [Encryption and Decryption Efficiency wiki (加解密效率)](https://github.com/michael811125/OxGFrame/wiki/Encryption-and-Decryption-Efficiency-Reference)
-- [Roadmap wiki](https://github.com/michael811125/OxGFrame/wiki/Roadmap)
+- [Coding Style wiki (代碼風格)](https://github.com/cout-m6o/OxGFrame/wiki/Coding-Style)
+- [Macro Defitions wiki (宏定義)](https://github.com/cout-m6o/OxGFrame/wiki/Macro-Definitions)
+- [Encryption and Decryption Efficiency wiki (加解密效率)](https://github.com/cout-m6o/OxGFrame/wiki/Encryption-and-Decryption-Efficiency-Reference)
+- [Roadmap wiki](https://github.com/cout-m6o/OxGFrame/wiki/Roadmap)
 
 ---
 
@@ -212,7 +218,7 @@ https://github.com/michael811125/OxGFrame/assets/30960759/5e41e84a-029d-4392-814
 
 ## 討論區
 
-[![dc_logo_x128](https://github.com/michael811125/OxGFrame/assets/30960759/b3bedd38-3c1d-4679-9417-d99a46f5b068)](https://discord.gg/jyJmWhRAv7)
+[![dc_logo_x128](https://github.com/cout-m6o/OxGFrame/assets/30960759/b3bedd38-3c1d-4679-9417-d99a46f5b068)](https://discord.gg/jyJmWhRAv7)
 
 ---
 

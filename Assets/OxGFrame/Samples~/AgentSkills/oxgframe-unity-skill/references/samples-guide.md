@@ -1,6 +1,8 @@
 # Official Samples Guide
 
-The OxGFrame package ships 16 samples under `Samples~/` (import them via Package Manager > OxGFrame > Samples). They are the ground truth for canonical usage — when generating code, mirror their patterns. This file maps what each sample demonstrates and what its scene requires.
+The OxGFrame package ships 16 samples under `Samples~/` (import them via Package Manager > OxGFrame > Samples). They are the ground truth for canonical **API usage** — when writing logic, mirror their patterns. This file maps what each sample demonstrates and what its scene requires.
+
+Samples are not a source to copy generated artifacts from: their `#region Binding Components` blocks, prefabs and config files were produced by the framework's editor tools (some by earlier versions). In a project, create those with the tools (`editor-tools.md`) instead of imitating the sample files.
 
 ## Sample map
 
@@ -56,9 +58,19 @@ private IEnumerator Start()
 }
 ```
 
+## Collector configs of the bundle demos
+
+`BundleDemo`, `BundleDLCDemo`, `USFrameDemo` and `HotfixerDemo` each ship the same pair of YooAsset collector configs (packages `DefaultPackage`, `ScenePackage`, `HotfixPackage`, `Dlc1Package`, `Dlc2Package`). Import the one that matches the installed YooAsset through its collector window:
+
+- `<Sample>_AssetBundleCollectorConfig.xml` — YooAsset 2.x format (`Version="v2.1"`).
+- `<Sample>_AssetBundleCollectorConfig_YooAsset3.xml` — YooAsset 3.x format (`Version="1"`). YooAsset 3.x refuses the 2.x file ("Config version is not compatible").
+
+The collect paths in both files are `Assets/OxGFrame/Samples/...`, and YooAsset validates the paths while importing: when the samples live somewhere else, change the paths in the XML first (or set the collectors up by hand).
+
 ## Scene/manager prerequisites summary
 
 - `PatchLauncher` prefab: required by anything that loads from bundles (BundleDemo, BundleDLCDemo, HotfixerDemo, USFrameDemo bundle scenes).
+- USFrameDemo loads `LevelDemo01`-`03` both ways: the `build#` keys need the three scenes enabled in Build Settings, the bundle keys need the `ScenePackage` collector.
 - `AudioManager` prefab (+ mixer asset): required by AudioFrame mixer APIs; auto-parenting nodes are created per `SoundType`.
 - `UICanvas` components on GameObjects whose names match each UI prefab's `uiSettings.canvasName` (demo uses `CanvasCamera`, `CanvasWorld`).
 - `CoreFrames.*.InitInstance()` / `MediaFrames.*.InitInstance()` called in a boot `Awake()` ("can more efficiency" — optional but recommended).
