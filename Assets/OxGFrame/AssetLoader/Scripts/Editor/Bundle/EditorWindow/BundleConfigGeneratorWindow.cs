@@ -58,7 +58,7 @@ namespace OxGFrame.AssetLoader.Editor
         [SerializeField]
         public string groupInfoArgs;
         [SerializeField]
-        public List<GroupInfo> groupInfos;
+        public List<GroupInfo> groupInfos = new List<GroupInfo>();
         [SerializeField]
         public bool autoReveal;
 
@@ -74,6 +74,11 @@ namespace OxGFrame.AssetLoader.Editor
         private SerializedProperty _exportAppPackagesPty;
         private SerializedProperty _exportIndividualPackagesPty;
         private SerializedProperty _bundlePlansPty;
+
+        /// <summary>
+        /// 背景樣式緩存 (Key 為色碼，所建立的貼圖於 OnDisable 時銷毀)
+        /// </summary>
+        private readonly Dictionary<string, GUIStyle> _backgroundStyles = new Dictionary<string, GUIStyle>();
 
         internal static string projectPath;
         internal static string keySaver;
@@ -94,6 +99,13 @@ namespace OxGFrame.AssetLoader.Editor
 
         private void OnEnable()
         {
+            // Domain Reload (重新編譯、進入 Play Mode) 或 Layout 還原後，靜態欄位會被清空，需補回儲存鍵值 (與 ShowWindow 相同)
+            if (string.IsNullOrEmpty(keySaver))
+            {
+                projectPath = Application.dataPath;
+                keySaver = $"{projectPath}_{nameof(BundleConfigGeneratorWindow)}";
+            }
+
             this._serObj = new SerializedObject(this);
             this._groupInfosPty = this._serObj.FindProperty("groupInfos");
             this._exportAppPackagesPty = this._serObj.FindProperty("exportAppPackages");
@@ -119,6 +131,8 @@ namespace OxGFrame.AssetLoader.Editor
             if (!string.IsNullOrEmpty(jsonGroupInfos)) this.groupInfos = JsonConvert.DeserializeObject<List<GroupInfo>>(jsonGroupInfos);
 
             this.buildTarget = (BuildTarget)Convert.ToInt32(EditorStorage.GetData(keySaver, "buildTarget", $"{(int)BuildTarget.StandaloneWindows64}"));
+            // 儲存值若非有效的 BuildTarget (舊版曾誤存為 operationType 的值)，則回退至預設值
+            if (!Enum.IsDefined(typeof(BuildTarget), this.buildTarget)) this.buildTarget = BuildTarget.StandaloneWindows64;
             this.activeBuildTarget = Convert.ToBoolean(EditorStorage.GetData(keySaver, "activeBuildTarget", "true"));
 
             this.autoReveal = Convert.ToBoolean(EditorStorage.GetData(keySaver, "autoReveal", "true"));
@@ -129,8 +143,41 @@ namespace OxGFrame.AssetLoader.Editor
 
             // Preset Bundle Plans
             string jsonBundlePlans = EditorStorage.GetData(keySaver, "bundlePlans", string.Empty);
-            if (!string.IsNullOrEmpty(jsonBundlePlans)) this.bundlePlans = JsonConvert.DeserializeObject<List<BundlePlan>>(jsonBundlePlans);
+            // 內容為 null 的 Json 會反序列化為 null，需以空列表取代 (避免後續 OnGUI 拋出 NullReferenceException)
+            if (!string.IsNullOrEmpty(jsonBundlePlans)) this.bundlePlans = JsonConvert.DeserializeObject<List<BundlePlan>>(jsonBundlePlans) ?? new List<BundlePlan>();
             this._choicePlanIndex = Convert.ToInt32(EditorStorage.GetData(keySaver, "_choicePlanIndex", "0"));
+        }
+
+        private void OnDisable()
+        {
+            // 銷毀背景樣式緩存所建立的貼圖 (HideAndDontSave 的貼圖需自行銷毀)
+            foreach (var style in this._backgroundStyles.Values)
+            {
+                if (style.normal.background != null) DestroyImmediate(style.normal.background);
+            }
+            this._backgroundStyles.Clear();
+        }
+
+        /// <summary>
+        /// 取得純色背景樣式 (依色碼緩存 1x1 貼圖的樣式，避免每次 OnGUI 事件重複建立)
+        /// </summary>
+        /// <param name="htmlColor"></param>
+        /// <returns></returns>
+        private GUIStyle _GetBackgroundStyle(string htmlColor)
+        {
+            // 緩存的貼圖失效時 (例如已被銷毀)，會重新建立
+            if (this._backgroundStyles.TryGetValue(htmlColor, out GUIStyle style) && style.normal.background != null) return style;
+
+            style = new GUIStyle();
+            var bg = new Texture2D(1, 1);
+            bg.hideFlags = HideFlags.HideAndDontSave;
+            ColorUtility.TryParseHtmlString(htmlColor, out Color color);
+            bg.SetPixel(0, 0, color);
+            bg.Apply();
+            style.normal.background = bg;
+            this._backgroundStyles[htmlColor] = style;
+
+            return style;
         }
 
         private void OnGUI()
@@ -152,30 +199,30 @@ namespace OxGFrame.AssetLoader.Editor
                     if (this._lastOperationType != OperationType.ExportAppConfigToStreamingAssets)
                     {
                         float minHeight = _windowSize.y - 120f;
-                        GetInstance().minSize = new Vector2(_windowSize.x, minHeight);
+                        this.minSize = new Vector2(_windowSize.x, minHeight);
                         // window 由大變小需要設置 postion
-                        GetInstance().position = new Rect(GetInstance().position.position.x, GetInstance().position.position.y, _windowSize.x, minHeight);
+                        this.position = new Rect(this.position.position.x, this.position.position.y, _windowSize.x, minHeight);
                     }
                     break;
                 case OperationType.ExportConfigsAndAppBundlesForCDN:
                     this._DrawExportConfigsAndAppBundlesForCDNView();
                     if (this._lastOperationType != OperationType.ExportConfigsAndAppBundlesForCDN)
                     {
-                        GetInstance().minSize = new Vector2(_windowSize.x, _windowSize.y);
+                        this.minSize = new Vector2(_windowSize.x, _windowSize.y);
                     }
                     break;
                 case OperationType.ExportAppBundlesWithoutConfigsForCDN:
                     this._DrawExportAppBundlesWithoutConfigsForCDNView();
                     if (this._lastOperationType != OperationType.ExportAppBundlesWithoutConfigsForCDN)
                     {
-                        GetInstance().minSize = new Vector2(_windowSize.x, _windowSize.y);
+                        this.minSize = new Vector2(_windowSize.x, _windowSize.y);
                     }
                     break;
                 case OperationType.ExportIndividualDLCBundlesForCDN:
                     this._DrawExportIndividualDlcBundlesForCDNView();
-                    if (this._lastOperationType != OperationType.ExportConfigsAndAppBundlesForCDN)
+                    if (this._lastOperationType != OperationType.ExportIndividualDLCBundlesForCDN)
                     {
-                        GetInstance().minSize = new Vector2(_windowSize.x, _windowSize.y);
+                        this.minSize = new Vector2(_windowSize.x, _windowSize.y);
                     }
                     break;
             }
@@ -189,13 +236,7 @@ namespace OxGFrame.AssetLoader.Editor
 
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
 
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
@@ -220,13 +261,7 @@ namespace OxGFrame.AssetLoader.Editor
 
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
 
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
@@ -259,13 +294,7 @@ namespace OxGFrame.AssetLoader.Editor
 
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
 
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
@@ -297,13 +326,7 @@ namespace OxGFrame.AssetLoader.Editor
 
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#1e3836", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#1e3836");
             EditorGUILayout.BeginVertical(style);
 
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
@@ -376,12 +399,13 @@ namespace OxGFrame.AssetLoader.Editor
                 // build target type
                 EditorGUI.BeginChangeCheck();
                 this.buildTarget = (BuildTarget)EditorGUILayout.EnumPopup("Build Target", this.buildTarget);
-                if (EditorGUI.EndChangeCheck()) EditorStorage.SaveData(keySaver, "buildTarget", ((int)this.operationType).ToString());
+                if (EditorGUI.EndChangeCheck()) EditorStorage.SaveData(keySaver, "buildTarget", ((int)this.buildTarget).ToString());
             }
 
             // active build target toggle
+            EditorGUI.BeginChangeCheck();
             this.activeBuildTarget = GUILayout.Toggle(this.activeBuildTarget, new GUIContent("Use Active Build Target", "If checked, will use active build target."));
-            EditorStorage.SaveData(keySaver, "activeBuildTarget", this.activeBuildTarget.ToString());
+            if (EditorGUI.EndChangeCheck()) EditorStorage.SaveData(keySaver, "activeBuildTarget", this.activeBuildTarget.ToString());
 
             EditorGUILayout.EndHorizontal();
         }
@@ -455,8 +479,9 @@ namespace OxGFrame.AssetLoader.Editor
             this.semanticRule.MINOR = GUILayout.Toggle(this.semanticRule.MINOR, new GUIContent("Minor", ""), GUILayout.MaxWidth(75f));
             EditorGUI.EndDisabledGroup();
 
+            EditorGUI.BeginChangeCheck();
             this.semanticRule.PATCH = GUILayout.Toggle(this.semanticRule.PATCH, new GUIContent("Patch", ""), GUILayout.MaxWidth(75f));
-            EditorStorage.SaveData(keySaver, "semanticRule.PATCH", this.semanticRule.PATCH.ToString());
+            if (EditorGUI.EndChangeCheck()) EditorStorage.SaveData(keySaver, "semanticRule.PATCH", this.semanticRule.PATCH.ToString());
 
             GUILayout.FlexibleSpace();
 
@@ -631,8 +656,9 @@ namespace OxGFrame.AssetLoader.Editor
             GUILayout.FlexibleSpace();
 
             // auto reveal toggle
+            EditorGUI.BeginChangeCheck();
             this.autoReveal = GUILayout.Toggle(this.autoReveal, new GUIContent("Auto Reveal", "If checked, after process will reveal folder."));
-            EditorStorage.SaveData(keySaver, "autoReveal", this.autoReveal.ToString());
+            if (EditorGUI.EndChangeCheck()) EditorStorage.SaveData(keySaver, "autoReveal", this.autoReveal.ToString());
 
             string inputPath;
             string outputPath;
@@ -653,6 +679,8 @@ namespace OxGFrame.AssetLoader.Editor
                         if (this.autoReveal) EditorUtility.RevealInFinder($"{outputPath}/{appCfgFileName}");
                         break;
                     case OperationType.ExportConfigsAndAppBundlesForCDN:
+                        // 來源或輸出資料夾為空時不進行處理 (避免以空路徑組合出磁碟根目錄下的輸出路徑，導致清空非預期的資料夾)
+                        if (!this._CheckSourceAndExportFolder()) break;
                         inputPath = this.sourceFolder[(int)this.operationType];
                         outputPath = $"{this.exportFolder[(int)this.operationType]}/{PatchSettings.settings.rootFolderName}";
                         List<string> exportDlcPackages = new List<string>();
@@ -664,6 +692,8 @@ namespace OxGFrame.AssetLoader.Editor
                         if (this.autoReveal) EditorUtility.RevealInFinder(outputPath);
                         break;
                     case OperationType.ExportAppBundlesWithoutConfigsForCDN:
+                        // 來源或輸出資料夾為空時不進行處理 (避免以空路徑組合出磁碟根目錄下的輸出路徑，導致清空非預期的資料夾)
+                        if (!this._CheckSourceAndExportFolder()) break;
                         inputPath = this.sourceFolder[(int)this.operationType];
                         outputPath = $"{this.exportFolder[(int)this.operationType]}/{PatchSettings.settings.rootFolderName}";
                         BundleHelper.ExportAppBundles(inputPath, outputPath, this.productName, this.semanticRule, this.appVersion, this.exportAppPackages.ToArray(), this.activeBuildTarget, this.buildTarget, true);
@@ -672,6 +702,8 @@ namespace OxGFrame.AssetLoader.Editor
                         if (this.autoReveal) EditorUtility.RevealInFinder(outputPath);
                         break;
                     case OperationType.ExportIndividualDLCBundlesForCDN:
+                        // 來源或輸出資料夾為空時不進行處理 (避免以空路徑組合出磁碟根目錄下的輸出路徑，導致清空非預期的資料夾)
+                        if (!this._CheckSourceAndExportFolder()) break;
                         inputPath = this.sourceFolder[(int)this.operationType];
                         outputPath = $"{this.exportFolder[(int)this.operationType]}/{PatchSettings.settings.rootFolderName}";
                         BundleHelper.ExportIndividualDlcBundles(inputPath, outputPath, this.productName, this.exportIndividualPackages, this.activeBuildTarget, this.buildTarget, true);
@@ -692,13 +724,7 @@ namespace OxGFrame.AssetLoader.Editor
 
             EditorGUILayout.Space();
 
-            GUIStyle style = new GUIStyle();
-            var bg = new Texture2D(1, 1);
-            ColorUtility.TryParseHtmlString("#263840", out Color color);
-            Color[] pixels = Enumerable.Repeat(color, Screen.width * Screen.height).ToArray();
-            bg.SetPixels(pixels);
-            bg.Apply();
-            style.normal.background = bg;
+            GUIStyle style = this._GetBackgroundStyle("#263840");
             EditorGUILayout.BeginVertical(style);
 
             var centeredStyle = new GUIStyle(GUI.skin.GetStyle("Label"));
@@ -727,7 +753,8 @@ namespace OxGFrame.AssetLoader.Editor
             // Load selection button
             Color bc = GUI.backgroundColor;
             GUI.backgroundColor = new Color32(83, 152, 255, 255);
-            if (GUILayout.Button("Copy Current", GUILayout.MaxWidth(100f)))
+            // 無任何 Plan 時不處理，並先將索引修正至有效範圍內 (避免以超出範圍的索引存取 Plans)
+            if (GUILayout.Button("Copy Current", GUILayout.MaxWidth(100f)) && this._ClampChoicePlanIndex())
             {
                 bool confirmation = EditorUtility.DisplayDialog
                 (
@@ -820,20 +847,60 @@ namespace OxGFrame.AssetLoader.Editor
         private void _OpenSourceFolder()
         {
             string folderPath = EditorStorage.GetData(keySaver, $"sourceFolder{(int)this.operationType}", Application.dataPath);
-            this.sourceFolder[(int)this.operationType] = EditorUtility.OpenFolderPanel("Open Source Folder", folderPath, string.Empty);
-            if (!string.IsNullOrEmpty(this.sourceFolder[(int)this.operationType])) EditorStorage.SaveData(keySaver, $"sourceFolder{(int)this.operationType}", this.sourceFolder[(int)this.operationType]);
+            // 取消選取時會返回空字串，此時保留原有路徑 (避免後續處理以空路徑為目標)
+            string selectedPath = EditorUtility.OpenFolderPanel("Open Source Folder", folderPath, string.Empty);
+            if (string.IsNullOrEmpty(selectedPath)) return;
+            this.sourceFolder[(int)this.operationType] = selectedPath;
+            EditorStorage.SaveData(keySaver, $"sourceFolder{(int)this.operationType}", this.sourceFolder[(int)this.operationType]);
         }
 
         private void _OpenExportFolder()
         {
             string folderPath = EditorStorage.GetData(keySaver, $"exportFolder{(int)this.operationType}", Application.dataPath);
-            this.exportFolder[(int)this.operationType] = EditorUtility.OpenFolderPanel("Open Export Folder", folderPath, string.Empty);
-            if (!string.IsNullOrEmpty(this.exportFolder[(int)this.operationType])) EditorStorage.SaveData(keySaver, $"exportFolder{(int)this.operationType}", this.exportFolder[(int)this.operationType]);
+            // 取消選取時會返回空字串，此時保留原有路徑 (避免後續處理以空路徑為目標)
+            string selectedPath = EditorUtility.OpenFolderPanel("Open Export Folder", folderPath, string.Empty);
+            if (string.IsNullOrEmpty(selectedPath)) return;
+            this.exportFolder[(int)this.operationType] = selectedPath;
+            EditorStorage.SaveData(keySaver, $"exportFolder{(int)this.operationType}", this.exportFolder[(int)this.operationType]);
+        }
+
+        /// <summary>
+        /// 檢查當前操作類型的來源與輸出資料夾是否皆已指定，未指定時會提示並返回 false
+        /// </summary>
+        /// <returns></returns>
+        private bool _CheckSourceAndExportFolder()
+        {
+            if (string.IsNullOrWhiteSpace(this.sourceFolder[(int)this.operationType]) ||
+                string.IsNullOrWhiteSpace(this.exportFolder[(int)this.operationType]))
+            {
+                EditorUtility.DisplayDialog("Process Message", "Please specify both the Source Folder and the Export Folder first.", "OK");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 將 Plan 索引修正至有效範圍內 (Plans 被移除後，索引可能殘留於範圍外)，無任何 Plan 時返回 false
+        /// </summary>
+        /// <returns></returns>
+        private bool _ClampChoicePlanIndex()
+        {
+            if (this.bundlePlans.Count == 0) return false;
+
+            int choicePlanIndex = Mathf.Clamp(this._choicePlanIndex, 0, this.bundlePlans.Count - 1);
+            if (choicePlanIndex != this._choicePlanIndex)
+            {
+                this._choicePlanIndex = choicePlanIndex;
+                EditorStorage.SaveData(keySaver, "_choicePlanIndex", this._choicePlanIndex.ToString());
+            }
+
+            return true;
         }
 
         private void _LoadBundlePlanToCurrent()
         {
-            if (this.bundlePlans.Count == 0) return;
+            if (!this._ClampChoicePlanIndex()) return;
 
             var bundlePlan = this.bundlePlans[this._choicePlanIndex];
 
@@ -854,7 +921,7 @@ namespace OxGFrame.AssetLoader.Editor
 
         private void _CopyCurrentToBundlePlan()
         {
-            if (this.bundlePlans.Count == 0) return;
+            if (!this._ClampChoicePlanIndex()) return;
 
             var bundlePlan = this.bundlePlans[this._choicePlanIndex];
 
@@ -894,7 +961,8 @@ namespace OxGFrame.AssetLoader.Editor
             {
                 EditorStorage.SaveData(keySaver, $"bundlePlanFilePath", Path.GetDirectoryName(filePath));
                 string json = File.ReadAllText(filePath);
-                this.bundlePlans = JsonConvert.DeserializeObject<List<BundlePlan>>(json);
+                // 空檔案或內容為 null 的 Json 會反序列化為 null，需以空列表取代 (避免後續 OnGUI 拋出 NullReferenceException)
+                this.bundlePlans = JsonConvert.DeserializeObject<List<BundlePlan>>(json) ?? new List<BundlePlan>();
 
                 // Resave bundle plans without format
                 json = JsonConvert.SerializeObject(this.bundlePlans);

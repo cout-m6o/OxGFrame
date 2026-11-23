@@ -103,11 +103,12 @@ namespace OxGFrame.AssetLoader.Bundle
 
         private async static UniTask<bool> _WebRequestPartialBytes(string url)
         {
-            // 使用 using 統一釋放 CancellationTokenSource 與 UnityWebRequest，避免任何路徑發生洩漏
+            // 使用 using 統一釋放 CancellationTokenSource、逾時計時器與 UnityWebRequest，避免任何路徑發生洩漏
+            // 注意：CancelAfterSlim 回傳的計時器必須一併釋放 (且先於 cts 釋放)，否則請求提前完成後，計時器到期時仍會對已釋放的 cts 調用 Cancel 而拋出 ObjectDisposedException
             using (var cts = new CancellationTokenSource())
+            using (cts.CancelAfterSlim(TimeSpan.FromSeconds(10)))
             using (UnityWebRequest request = UnityWebRequest.Get(url))
             {
-                cts.CancelAfterSlim(TimeSpan.FromSeconds(10));
                 request.downloadHandler = new DownloadHandlerBuffer();
 
                 try

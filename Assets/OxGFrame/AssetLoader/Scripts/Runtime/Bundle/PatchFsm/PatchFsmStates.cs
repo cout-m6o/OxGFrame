@@ -72,7 +72,8 @@ namespace OxGFrame.AssetLoader.PatchFsm
                 var dlcPackageNames = PackageManager.GetPresetDlcPackageNames();
                 var packageNames = appPackageNames.Concat(dlcPackageNames).ToArray();
 
-                bool isCleared = false;
+                // 尚未配置 Preset packages 時無需清理，直接視為完成 (避免無包裹可清理卻誤發修復失敗事件)
+                bool isCleared = packageNames.Length == 0;
                 foreach (var packageName in packageNames)
                 {
                     // Clear cache and files of package
@@ -155,6 +156,24 @@ namespace OxGFrame.AssetLoader.PatchFsm
 
             private async UniTask _AppConfigRequest()
             {
+                try
+                {
+                    await this._AppConfigRequestCore();
+                }
+                catch (Exception ex)
+                {
+                    // 若已切換至後續流程，表示異常並非由本流程產生，維持原樣向外拋出
+                    if (this._machine.CurrentNode != typeof(FsmAppVersionUpdate).FullName)
+                        throw;
+
+                    // 仍停留於本流程時發生的異常 (ex: 配置文件解析失敗、缺少配置文件、檔案讀寫失敗)，發送失敗事件以避免流程無聲卡死
+                    Logging.PrintException<Logger>(ex);
+                    PatchEvents.PatchAppVersionUpdateFailed.SendEventMessage();
+                }
+            }
+
+            private async UniTask _AppConfigRequestCore()
+            {
                 // EditorSimulateMode skip app version comparison directly
                 if (BundleConfig.playMode == BundleConfig.PlayMode.EditorSimulateMode)
                 {
@@ -196,6 +215,10 @@ namespace OxGFrame.AssetLoader.PatchFsm
                 }
 
                 AppConfig hostCfg = JsonConvert.DeserializeObject<AppConfig>(hostCfgJson);
+                // 內容無效時 (ex: "null") 視為請求失敗
+                if (hostCfg == null)
+                    throw new Exception($"Failed to parse the app config from the URL: {url}.");
+
                 // 處理 App 版號比對
                 await this._AppVersionComparison(hostCfg);
             }
@@ -670,6 +693,24 @@ namespace OxGFrame.AssetLoader.PatchFsm
 
             private async UniTask _CreateDownloader()
             {
+                try
+                {
+                    await this._CreateDownloaderCore();
+                }
+                catch (Exception ex)
+                {
+                    // 若已切換至後續流程，表示異常並非由本流程產生，維持原樣向外拋出
+                    if (this._machine.CurrentNode != typeof(FsmCreateDownloader).FullName)
+                        throw;
+
+                    // 仍停留於本流程時發生的異常 (ex: 資源配置文件解析失敗、無法取得請求端點)，發送失敗事件以避免流程無聲卡死
+                    Logging.PrintException<Logger>(ex);
+                    PatchEvents.PatchDownloadFailed.SendEventMessage(ex.Message);
+                }
+            }
+
+            private async UniTask _CreateDownloaderCore()
+            {
                 await UniTask.Delay(TimeSpan.FromSeconds(0.1f), true);
 
                 // EditorSimulateMode skip directly
@@ -728,10 +769,14 @@ namespace OxGFrame.AssetLoader.PatchFsm
                         }
                     }
 
+                    // 先行解析，確認內容有效後才儲存 (避免無效內容覆蓋上一次有效的本地記錄)
+                    PatchConfig patchCfg = JsonConvert.DeserializeObject<PatchConfig>(hostCfgJson);
+                    if (patchCfg == null)
+                        throw new Exception($"Failed to parse patch config from URL: {url}");
+
                     // 儲存本地資源群包配置數據
                     if (!isLastHostCfgJson)
                         BundleConfig.saver.SaveString(BundleConfig.LAST_PATCH_CONFIG_KEY, hostCfgJson);
-                    PatchConfig patchCfg = JsonConvert.DeserializeObject<PatchConfig>(hostCfgJson);
                     List<GroupInfo> patchGroupInfos = patchCfg.GROUP_INFOS;
                     #endregion
 

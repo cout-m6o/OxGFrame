@@ -1,4 +1,5 @@
-﻿using OxGKit.LoggingSystem;
+﻿using Cysharp.Threading.Tasks;
+using OxGKit.LoggingSystem;
 using System.Collections.Generic;
 
 namespace OxGFrame.AssetLoader.Cacher
@@ -107,6 +108,18 @@ namespace OxGFrame.AssetLoader.Cacher
         protected void TryRemoveLoadingTask(string assetName)
         {
             this._loadingTasker.TryRemoveLoadingTask(assetName);
+        }
+
+        /// <summary>
+        /// 等待正在執行的載入任務結束 (僅等待任務結束，不取用其結果)
+        /// <para> 用於進行中的任務型別與當前請求不同而無法共用結果時 (ex: 預載任務 vs 型別化載入任務) </para>
+        /// </summary>
+        /// <param name="assetName"></param>
+        /// <returns></returns>
+        protected async UniTask WaitForLoadingTask(string assetName)
+        {
+            while (this.HasLoadingTask(assetName))
+                await UniTask.Yield();
         }
         #endregion
 

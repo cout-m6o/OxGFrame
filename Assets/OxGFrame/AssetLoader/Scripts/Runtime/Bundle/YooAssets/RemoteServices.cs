@@ -1,7 +1,6 @@
 ﻿#if YOOASSET_3
 using System.Collections.Generic;
 #endif
-using System.IO;
 using YooAsset;
 
 namespace OxGFrame.AssetLoader.Bundle
@@ -15,17 +14,19 @@ namespace OxGFrame.AssetLoader.Bundle
         public HostServers(string hostServer, string fallbackHostServer)
         {
             this._hostServer = hostServer;
-            this._fallbackHostServer = fallbackHostServer;
+            // 未提供備援位址時以主位址替代，避免組出無效的備援 URL
+            this._fallbackHostServer = string.IsNullOrEmpty(fallbackHostServer) ? hostServer : fallbackHostServer;
         }
 
         public string GetRemoteMainURL(string fileName)
         {
-            return Path.Combine(this._hostServer, fileName);
+            // 使用 URL 組合 (Path.Combine 於 Windows 會產生反斜線)
+            return BundleConfig.CombineUrl(this._hostServer, fileName);
         }
 
         public string GetRemoteFallbackURL(string fileName)
         {
-            return Path.Combine(this._fallbackHostServer, fileName);
+            return BundleConfig.CombineUrl(this._fallbackHostServer, fileName);
         }
     }
 #elif YOOASSET_3
@@ -37,7 +38,8 @@ namespace OxGFrame.AssetLoader.Bundle
         public HostServers(string hostServer, string fallbackHostServer)
         {
             this._hostServer = hostServer;
-            this._fallbackHostServer = fallbackHostServer;
+            // 未提供備援位址時以主位址替代，避免組出無效的備援 URL
+            this._fallbackHostServer = string.IsNullOrEmpty(fallbackHostServer) ? hostServer : fallbackHostServer;
         }
 
         /// <summary>
@@ -45,10 +47,11 @@ namespace OxGFrame.AssetLoader.Bundle
         /// </summary>
         public IReadOnlyList<string> GetRemoteUrls(string fileName)
         {
+            // 使用 URL 組合 (Path.Combine 於 Windows 會產生反斜線)
             return new List<string>()
             {
-                Path.Combine(this._hostServer, fileName),
-                Path.Combine(this._fallbackHostServer, fileName)
+                BundleConfig.CombineUrl(this._hostServer, fileName),
+                BundleConfig.CombineUrl(this._fallbackHostServer, fileName)
             };
         }
     }
