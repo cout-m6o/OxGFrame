@@ -1,5 +1,11 @@
-﻿using HybridCLR.Editor.Commands;
+﻿#if HYBRIDCLR_9_OR_NEWER
+// [HybridCLR v9] 編輯器命名空間調整 (移除 Editor 層級)
+using HybridCLR.Commands;
+using HybridCLR.Installer;
+#else
+using HybridCLR.Editor.Commands;
 using HybridCLR.Editor.Installer;
+#endif
 using Newtonsoft.Json.Linq;
 using OxGFrame.AssetLoader;
 using OxGFrame.AssetLoader.Bundle;
@@ -1167,7 +1173,8 @@ namespace OxGFrame.Extensions.BuildTool.Editor
                 {
                     // 取得 group 的各個屬性
                     string groupName = group["groupName"]?.Value<string>();
-                    string[] tags = group["tags"]?.Value<string[]>();
+                    // tags 為 Json 陣列，需以 ToObject 轉換 (Value<T> 僅適用於單一值，用於陣列會拋出 InvalidCastException)
+                    string[] tags = group["tags"]?.ToObject<string[]>();
 
                     GroupInfo groupInfo = new GroupInfo();
                     groupInfo.groupName = groupName;

@@ -13,7 +13,7 @@ using UnityEngine.UI;
 
 public class HotfixerDemo : MonoBehaviour
 {
-    [Tooltip("If checked, it will automatically request the config file (hotfixdllconfig.conf) from StreamingAssets.")]
+    [Tooltip("If checked, it will automatically request the config file (HotfixManifest.dat) from StreamingAssets.")]
     public bool loadFromConfig = false;
 
     public GameObject startHotfixBtn;
@@ -275,14 +275,14 @@ public class HotfixerDemo : MonoBehaviour
         }
         else
         {
-            // Auto try to load hotfixdllconfig.conf from StreamingAssets
+            // Auto try to load HotfixManifest.dat from StreamingAssets
             Hotfixers.CheckHotfix
             (
                 // Download and load hotfix files from HotfixPackage
                 "HotfixPackage",
                 () =>
                 {
-                    Debug.LogWarning("<color=#ff8321>Please generate the hotfixdllconfig.conf file in the StreamingAssets folder using the MenuItem -> OxGFrame/Hotfixer/Hotfix Dll Config Generator.</color>");
+                    Debug.LogWarning("<color=#ff8321>Please generate the HotfixManifest.dat file in the StreamingAssets folder using the MenuItem -> OxGFrame/Hotfixer/Hotfix Config Generator (HotfixManifest.dat).</color>");
                 }
             );
         }

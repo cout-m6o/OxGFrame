@@ -29,6 +29,11 @@
             "name": "com.tuyoogame.yooasset",
             "expression": "[3.0.0,4.0.0)",
             "define": "YOOASSET_3"
+        },
+        {
+            "name": "com.code-philosophy.hybridclr",
+            "expression": "9.0.0",
+            "define": "HYBRIDCLR_9_OR_NEWER"
         }
     ],
     "noEngineReferences": false

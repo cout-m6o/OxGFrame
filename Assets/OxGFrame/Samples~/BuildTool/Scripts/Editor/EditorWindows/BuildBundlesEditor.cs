@@ -210,6 +210,13 @@ namespace OxGFrame.Extensions.BuildTool.Editor
 
         private void OnEnable()
         {
+            // Domain Reload (重新編譯、進入 Play Mode) 或 Layout 還原後，靜態欄位會被清空，需補回儲存鍵值 (與 ShowWindow 相同)
+            if (string.IsNullOrEmpty(keySaver))
+            {
+                projectPath = Application.dataPath;
+                keySaver = $"{projectPath}_{nameof(BuildBundlesEditor)}";
+            }
+
             this._serObj = new SerializedObject(this);
             this._groups = this._serObj.FindProperty("groups");
             this._generateAll = this._serObj.FindProperty("generateAll");
@@ -543,8 +550,10 @@ namespace OxGFrame.Extensions.BuildTool.Editor
             this.semanticRule.MINOR = GUILayout.Toggle(this.semanticRule.MINOR, new GUIContent("Minor", ""), GUILayout.MaxWidth(75f));
             EditorGUI.EndDisabledGroup();
 
+            // 僅於數值變更時才儲存 (避免每次 OnGUI 事件皆寫入 EditorPrefs)
+            EditorGUI.BeginChangeCheck();
             this.semanticRule.PATCH = GUILayout.Toggle(this.semanticRule.PATCH, new GUIContent("Patch", ""), GUILayout.MaxWidth(75f));
-            EditorStorage.SaveData(keySaver, "semanticRule.PATCH", this.semanticRule.PATCH.ToString());
+            if (EditorGUI.EndChangeCheck()) EditorStorage.SaveData(keySaver, "semanticRule.PATCH", this.semanticRule.PATCH.ToString());
 
             GUILayout.FlexibleSpace();
 
@@ -1014,13 +1023,15 @@ namespace OxGFrame.Extensions.BuildTool.Editor
 
             GUILayout.FlexibleSpace();
 
-            // clear output path toggle
+            // clear output path toggle (僅於數值變更時才儲存，避免每次 OnGUI 事件皆寫入 EditorPrefs)
+            EditorGUI.BeginChangeCheck();
             this.isClearOutputPath = GUILayout.Toggle(this.isClearOutputPath, new GUIContent("Clear Ouput Path", "If checked, after process will clear folder."));
-            EditorStorage.SaveData(keySaver, "isClearOutputPath", this.isClearOutputPath.ToString());
+            if (EditorGUI.EndChangeCheck()) EditorStorage.SaveData(keySaver, "isClearOutputPath", this.isClearOutputPath.ToString());
 
-            // auto reveal toggle
+            // auto reveal toggle (僅於數值變更時才儲存，避免每次 OnGUI 事件皆寫入 EditorPrefs)
+            EditorGUI.BeginChangeCheck();
             this.autoReveal = GUILayout.Toggle(this.autoReveal, new GUIContent("Auto Reveal", "If checked, after process will reveal folder."));
-            EditorStorage.SaveData(keySaver, "autoReveal", this.autoReveal.ToString());
+            if (EditorGUI.EndChangeCheck()) EditorStorage.SaveData(keySaver, "autoReveal", this.autoReveal.ToString());
 
             // 顯示 Build 按鈕
             bc = GUI.backgroundColor;
