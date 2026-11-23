@@ -35,8 +35,16 @@ namespace OxGFrame.MediaFrame
 
         private static float _fdt;
 
+        /// <summary>
+        /// TimeScale 為 0 期間的刷新計時
+        /// </summary>
+        private ZeroTimeScaleTimer _zeroTimeScaleTimer;
+
         private void FixedUpdate()
         {
+            // 需於每次 FixedUpdate 取得 (恢復 TimeScale 後，會扣除 TimeScale 為 0 期間已由 Update 刷新的時間)
+            float fixedUnscaledDeltaTime = this._zeroTimeScaleTimer.GetFixedUnscaledDeltaTime();
+
             if (this._listAllCache.Count > 0)
             {
                 int count = this._listAllCache.Count;
@@ -44,14 +52,44 @@ namespace OxGFrame.MediaFrame
                 {
                     if (this._listAllCache.Count != count) break;
 
+                    T mBase = this._listAllCache[i];
+
+                    // 略過已被銷毀的物件 (避免存取已銷毀的物件時拋出異常，導致後續的物件皆無法被刷新)
+                    if (mBase == null) continue;
+
                     // 僅刷新激活的物件
-                    if (this._listAllCache[i].gameObject.activeSelf)
+                    if (mBase.gameObject.activeSelf)
                     {
                         // 不受 TimeScale 影響時，必須使用 fixedUnscaledDeltaTime
-                        if (this._listAllCache[i].ignoreTimeScale) _fdt = Time.fixedUnscaledDeltaTime;
+                        if (mBase.ignoreTimeScale) _fdt = fixedUnscaledDeltaTime;
                         else _fdt = Time.fixedDeltaTime;
-                        this._listAllCache[i].HandleFixedUpdate(_fdt);
+                        mBase.HandleFixedUpdate(_fdt);
                     }
+                }
+            }
+        }
+
+        private void Update()
+        {
+            // TimeScale 為 0 時不會調用 FixedUpdate，因此該期間改由 Update 刷新不受 TimeScale 影響的影音 (TimeScale 不為 0 時維持由 FixedUpdate 刷新)
+            if (!this._zeroTimeScaleTimer.TryGetUpdateDeltaTime(out float dt))
+                return;
+
+            if (this._listAllCache.Count > 0)
+            {
+                int count = this._listAllCache.Count;
+                for (int i = 0; i < count; i++)
+                {
+                    if (this._listAllCache.Count != count) break;
+
+                    T mBase = this._listAllCache[i];
+
+                    // 略過已被銷毀的物件
+                    if (mBase == null) continue;
+
+                    // 僅刷新激活的物件
+                    if (mBase.gameObject.activeSelf)
+                        mBase.HandleZeroTimeScaleUpdate(dt);
                 }
             }
         }
@@ -190,13 +228,23 @@ namespace OxGFrame.MediaFrame
         /// <returns></returns>
         protected async UniTask<GameObject> LoadAssetIntoCache(string packageName, string assetName)
         {
+            // 相同資源正在加載中時，需等待該加載程序完成 (避免併發請求時，直接從 AllCache 中取得 null)
+            while (this.HasInLoadingFlags(assetName))
+                await UniTask.Yield();
+
             GameObject go;
             // 判斷不在 AllCache 中，也不在 LoadingFlags 中，才進行加載程序
             if (!this.HasAssetInCache(assetName) && !this.HasInLoadingFlags(assetName))
             {
-                this._loadingFlags.Add(assetName);                    // 標記 LoadingFlag
-                go = await this.LoadingAsset(packageName, assetName); // 開始加載
-                this._loadingFlags.Remove(assetName);                 // 移除 LoadingFlag
+                this._loadingFlags.Add(assetName);                        // 標記 LoadingFlag
+                try
+                {
+                    go = await this.LoadingAsset(packageName, assetName); // 開始加載
+                }
+                finally
+                {
+                    this._loadingFlags.Remove(assetName);                 // 移除 LoadingFlag (加載發生異常時也必須移除，避免標記殘留)
+                }
             }
             else
                 go = this.GetAssetFromCache(assetName); // 如果判斷沒有要執行加載程序，就直接從 AllCache 中取得
@@ -216,19 +264,25 @@ namespace OxGFrame.MediaFrame
                 return default;
 
             U sourceComponent = go.GetComponent<U>();
+            // 來源物件查無對應的組件時，直接返回 (由調用端輸出錯誤訊息)，避免存取空引用而拋出異常
+            if (sourceComponent == null)
+                return default;
+
             bool sourceMonoDriveFlag = false;
-            if (sourceComponent != null)
+            if (sourceComponent.monoDrive)
             {
-                if (sourceComponent.monoDrive)
-                {
-                    // 記錄標記
-                    sourceMonoDriveFlag = sourceComponent.monoDrive;
-                    // 動態加載時，必須取消 monoDrive
-                    sourceComponent.monoDrive = false;
-                }
+                // 記錄標記
+                sourceMonoDriveFlag = sourceComponent.monoDrive;
+                // 動態加載時，必須取消 monoDrive
+                sourceComponent.monoDrive = false;
             }
 
-            GameObject instGo = Instantiate(sourceComponent.gameObject, (parent != null) ? parent : spawnParent);
+            GameObject instGo = Instantiate(go, (parent != null) ? parent : spawnParent);
+
+            // 實例化後立即還原來源設置 (避免後續流程提前返回或發生異常時，來源物件的 monoDrive 無法被還原)
+            if (sourceMonoDriveFlag)
+                sourceComponent.monoDrive = true;
+
             instGo.name = instGo.name.Replace("(Clone)", "");
             U mBase = instGo.GetComponent<U>();
             if (mBase == null)
@@ -262,7 +316,18 @@ namespace OxGFrame.MediaFrame
                 }
             }
 
-            bool isInitialized = await mBase.Init();
+            bool isInitialized;
+            try
+            {
+                isInitialized = await mBase.Init();
+            }
+            catch
+            {
+                // 初始過程發生異常時，需銷毀已加入柱列緩存的物件 (避免殘留無法被使用與釋放的物件)，再將異常拋回給調用端
+                this.Destroy(mBase);
+                throw;
+            }
+
             if (!isInitialized)
             {
                 this.Destroy(mBase);
@@ -275,10 +340,6 @@ namespace OxGFrame.MediaFrame
                 return default;
 
             mBase.gameObject.SetActive(false);
-
-            // 還原來源設置
-            if (sourceMonoDriveFlag)
-                sourceComponent.monoDrive = true;
 
             return mBase;
         }
@@ -328,13 +389,18 @@ namespace OxGFrame.MediaFrame
         /// <param name="assetName"></param>
         protected virtual void Destroy(T mBase)
         {
+            // 已進入銷毀程序時，不需重複處理 (避免結束事件內再次觸發停止時，造成重複釋放與卸載)
+            if (mBase.isDestroying)
+                return;
+
             string assetName = mBase.assetName;
 
             // 調用釋放接口
             mBase.OnRelease();
 
-            // 刪除物件
-            if (!mBase.gameObject.IsDestroyed())
+            // 刪除物件 (物件已被外部銷毀時，僅需進行後續的緩存移除)
+            if (mBase != null &&
+                !mBase.gameObject.IsDestroyed())
             {
                 mBase.isDestroying = true;
                 Destroy(mBase.gameObject);

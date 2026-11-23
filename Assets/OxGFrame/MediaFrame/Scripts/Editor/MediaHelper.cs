@@ -18,6 +18,9 @@ namespace OxGFrame.MediaFrame.Editor
         /// <param name="outputPath"></param>
         public static void ExportMediaUrlConfig(string audioUrlset, string videoUrlset, string outputPath)
         {
+            // 輸出目錄不存在時先行建立 (避免寫入配置文件時拋出 DirectoryNotFoundException)
+            if (!Directory.Exists(outputPath)) Directory.CreateDirectory(outputPath);
+
             if (string.IsNullOrEmpty(audioUrlset)) audioUrlset = "http://127.0.0.1/audio/";
             if (string.IsNullOrEmpty(videoUrlset)) videoUrlset = "http://127.0.0.1/video/";
 

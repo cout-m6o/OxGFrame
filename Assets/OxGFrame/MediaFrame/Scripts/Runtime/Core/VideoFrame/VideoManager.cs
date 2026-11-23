@@ -115,8 +115,9 @@ namespace OxGFrame.MediaFrame.VideoFrame
             {
                 for (int i = 0; i < vidBases.Length; i++)
                 {
+                    // 需傳遞調用端指定的 loops 與 volume (暫停中的影片恢復播放時，僅會套用 volume，循環次數維持暫停前的狀態)
                     if (!vidBases[i].IsPlaying())
-                        this._Play(vidBases[i], 0, 0f);
+                        this._Play(vidBases[i], loops, volume);
                 }
 
                 return vidBases;

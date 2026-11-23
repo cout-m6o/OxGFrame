@@ -43,7 +43,14 @@ namespace OxGFrame.MediaFrame.VideoFrame
         private void FixedUpdate()
         {
             if (this.monoDrive)
-                this.HandleFixedUpdate(this.ignoreTimeScale ? Time.fixedUnscaledDeltaTime : Time.fixedDeltaTime);
+                this.HandleSelfFixedUpdate();
+        }
+
+        private void Update()
+        {
+            // TimeScale 為 0 時不會調用 FixedUpdate，因此該期間改由 Update 進行刷新
+            if (this.monoDrive)
+                this.HandleSelfUpdate();
         }
 #endif
 
@@ -105,6 +112,9 @@ namespace OxGFrame.MediaFrame.VideoFrame
                     {
                         this._videoPlayer.source = VideoSource.Url;
                         string url = await this.GetVideoUrlFromURL();
+                        // 請求期間物件已被銷毀時，直接返回 (避免後續存取已銷毀的組件而拋出異常)
+                        if (this == null)
+                            return false;
                         if (!this.TrySetUrl(url))
                         {
                             Logging.PrintError<Logger>($"Cannot find VideoClip: {this.mediaName}");
@@ -121,23 +131,29 @@ namespace OxGFrame.MediaFrame.VideoFrame
                 Logging.Print<Logger>($"{this.mediaName} video preparation started...");
             }
 
-            var cts = new CancellationTokenSource();
-            cts.CancelAfterSlim(TimeSpan.FromSeconds(this.maxPrepareTimeSeconds <= 0 ? MAX_PREPARE_TIME_SECONDS : this.maxPrepareTimeSeconds));
-            try
+            // 準備結束後需釋放計時器與 CTS，避免每次初始皆殘留一個持續計時至逾時的 PlayerLoopTimer
+            using (var cts = new CancellationTokenSource())
+            using (cts.CancelAfterSlim(TimeSpan.FromSeconds(this.maxPrepareTimeSeconds <= 0 ? MAX_PREPARE_TIME_SECONDS : this.maxPrepareTimeSeconds), GetPrepareTimeoutDelayType()))
             {
-                do
+                try
                 {
-                    if (this._videoPlayer.isPrepared)
-                        break;
-                    // load balancing
-                    await UniTask.Yield(PlayerLoopTiming.FixedUpdate, cts.Token);
-                } while (true);
-                Logging.Print<Logger>($"{this.mediaName} video is prepared");
-            }
-            catch (OperationCanceledException ex)
-            {
-                Logging.PrintException<Logger>(ex);
-                return false;
+                    do
+                    {
+                        // 準備期間物件已被銷毀時，直接返回 (避免存取已銷毀的組件而拋出異常)
+                        if (this == null)
+                            return false;
+                        if (this._videoPlayer.isPrepared)
+                            break;
+                        // load balancing (需使用 Update 輪詢，TimeScale 為 0 時不會調用 FixedUpdate，會導致該期間無法完成準備)
+                        await UniTask.Yield(PlayerLoopTiming.Update, cts.Token);
+                    } while (true);
+                    Logging.Print<Logger>($"{this.mediaName} video is prepared");
+                }
+                catch (OperationCanceledException ex)
+                {
+                    Logging.PrintException<Logger>(ex);
+                    return false;
+                }
             }
             #endregion
 
@@ -258,12 +274,52 @@ namespace OxGFrame.MediaFrame.VideoFrame
             this.ProcessLooping(this._videoPlayer, dt);
         }
 
+        internal sealed override bool IsPlayerAdvancingAtZeroTimeScale()
+        {
+            if (this._videoPlayer == null)
+                return false;
+
+#if UNITY_2022_2_OR_NEWER
+            switch (this._videoPlayer.timeUpdateMode)
+            {
+                // 跟隨遊戲時間，TimeScale 為 0 時影片會停住
+                case VideoTimeUpdateMode.GameTime:
+                    return false;
+                // 跟隨音訊的 DSP 時鐘，AudioListener.pause 時影片會停住
+                case VideoTimeUpdateMode.DSPTime:
+                    return !AudioListener.pause;
+            }
+#endif
+
+            // 其餘情況影片的播放不受 TimeScale 影響
+            return true;
+        }
+
+        internal sealed override bool IsPlayerPausedByAudioListener()
+        {
+            if (this._videoPlayer == null)
+                return false;
+
+#if UNITY_2022_2_OR_NEWER
+            // 僅跟隨音訊 DSP 時鐘的影片，會於 AudioListener.pause 時停住
+            return this._videoPlayer.timeUpdateMode == VideoTimeUpdateMode.DSPTime && AudioListener.pause;
+#else
+            return false;
+#endif
+        }
+
         public sealed override void Play(int loops, float volume)
         {
             if (this._videoPlayer == null)
                 return;
 
             this.gameObject.SetActive(true);
+
+            // 停止時會釋放 RenderTexture，因此不銷毀的影片再次播放時，需重新取得 RenderTexture (避免持續映射至已釋放的 RenderTexture)
+            if (this.isPrepared &&
+                this.renderMode == RenderMode.RenderTexture &&
+                this._targetRt == null)
+                this._SetTargetRenderTexture();
 
             this._videoPlayer.SetDirectAudioMute(0, false);
 
@@ -298,7 +354,10 @@ namespace OxGFrame.MediaFrame.VideoFrame
             if (this._targetRt != null)
                 this._ReleaseTargetRenderTexture();
 
-            this._endEvent?.Invoke();
+            // 先取出並清空結束事件後再調用，避免事件內再次觸發停止 (ex: Stop, StopAll) 時，造成重入的無窮遞迴
+            Action endEvent = this._endEvent;
+            this._endEvent = null;
+            endEvent?.Invoke();
             this._endEvent = null;
 
             this.gameObject.SetActive(false);
@@ -314,6 +373,11 @@ namespace OxGFrame.MediaFrame.VideoFrame
         public sealed override void Pause()
         {
             if (this._videoPlayer == null)
+                return;
+
+            // 僅允許暫停播放中的影片 (避免尚未播放或已停止的影片被標記為暫停，導致後續 Play 或 ResumeAll 時狀態錯亂)
+            if (!this._isPlaying &&
+                !this._videoPlayer.isPlaying)
                 return;
 
             this._isPlaying = false;
@@ -368,7 +432,10 @@ namespace OxGFrame.MediaFrame.VideoFrame
             if (this._targetRt != null)
                 this._ReleaseTargetRenderTexture();
 
-            this._endEvent?.Invoke();
+            // 先取出並清空結束事件後再調用，避免事件內再次觸發釋放時，造成重入的無窮遞迴
+            Action endEvent = this._endEvent;
+            this._endEvent = null;
+            endEvent?.Invoke();
 
             base.OnRelease();
             this._videoPlayer = null;
@@ -415,6 +482,9 @@ namespace OxGFrame.MediaFrame.VideoFrame
             speed = Mathf.Clamp(speed, 0.01f, float.MaxValue);
 
             this._videoPlayer.playbackSpeed = this.playbackSpeed = speed;
+            // 尚未取得影片長度時 (ex: 尚未準備完成)，無法換算當前進度，僅需設置速度 (避免除以零產生 NaN 而跳轉至無效的幀數)
+            if (this._mediaLength <= 0f)
+                return;
             // use skip to percent to update current length and media total length
             this.SkipToPercent((this._mediaLength - this._currentRemainingLength) / this._mediaLength);
         }

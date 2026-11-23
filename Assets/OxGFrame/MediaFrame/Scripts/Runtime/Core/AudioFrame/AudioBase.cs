@@ -48,7 +48,14 @@ namespace OxGFrame.MediaFrame.AudioFrame
         private void FixedUpdate()
         {
             if (this.monoDrive)
-                this.HandleFixedUpdate(this.ignoreTimeScale ? Time.fixedUnscaledDeltaTime : Time.fixedDeltaTime);
+                this.HandleSelfFixedUpdate();
+        }
+
+        private void Update()
+        {
+            // TimeScale 為 0 時不會調用 FixedUpdate，因此該期間改由 Update 進行刷新
+            if (this.monoDrive)
+                this.HandleSelfUpdate();
         }
 #endif
 
@@ -81,6 +88,10 @@ namespace OxGFrame.MediaFrame.AudioFrame
                     break;
             }
 
+            // 請求期間物件已被銷毀時，直接返回 (避免後續存取已銷毀的組件而拋出異常)
+            if (this == null)
+                return false;
+
             if (this.audioClip == null)
             {
                 Logging.PrintError<Logger>($"Cannot find AudioClip: {this.mediaName}");
@@ -94,8 +105,17 @@ namespace OxGFrame.MediaFrame.AudioFrame
                     break;
                 case MixerGroupSourceType.Find:
                     var masterMixer = AudioManager.GetInstance().GetMixerByName(this._mixerName);
-                    var mixerGroup = masterMixer?.FindMatchingGroups(this._mixerGroupName)[0];
-                    this._mixerGroup = mixerGroup;
+                    // 查無符合的 MixerGroup 時會返回空陣列，需先判斷長度再取值，避免 IndexOutOfRangeException 中斷整個初始流程
+                    var mixerGroups = masterMixer?.FindMatchingGroups(this._mixerGroupName);
+                    if (mixerGroups != null &&
+                        mixerGroups.Length > 0)
+                        this._mixerGroup = mixerGroups[0];
+                    else
+                    {
+                        this._mixerGroup = null;
+                        if (masterMixer != null)
+                            Logging.PrintWarning<Logger>($"Cannot find AudioMixerGroup: {this._mixerGroupName} in AudioMixer: {this._mixerName}. Audio: {this.mediaName}");
+                    }
                     break;
             }
 
@@ -116,24 +136,30 @@ namespace OxGFrame.MediaFrame.AudioFrame
                 Logging.Print<Logger>($"{this.mediaName} audio preparation started...");
             }
 
-            var cts = new CancellationTokenSource();
-            cts.CancelAfterSlim(TimeSpan.FromSeconds(this.maxPrepareTimeSeconds <= 0 ? MAX_PREPARE_TIME_SECONDS : this.maxPrepareTimeSeconds));
-            try
+            // 準備結束後需釋放計時器與 CTS，避免每次初始皆殘留一個持續計時至逾時的 PlayerLoopTimer
+            using (var cts = new CancellationTokenSource())
+            using (cts.CancelAfterSlim(TimeSpan.FromSeconds(this.maxPrepareTimeSeconds <= 0 ? MAX_PREPARE_TIME_SECONDS : this.maxPrepareTimeSeconds), GetPrepareTimeoutDelayType()))
             {
-                do
+                try
                 {
-                    if (this._audioSource.clip != null &&
-                        this._audioSource.clip.loadState == AudioDataLoadState.Loaded)
-                        break;
-                    // load balancing
-                    await UniTask.Yield(PlayerLoopTiming.FixedUpdate, cts.Token);
-                } while (true);
-                Logging.Print<Logger>($"{this.mediaName} audio is prepared");
-            }
-            catch (OperationCanceledException ex)
-            {
-                Logging.PrintException<Logger>(ex);
-                return false;
+                    do
+                    {
+                        // 準備期間物件已被銷毀時，直接返回 (避免存取已銷毀的組件而拋出異常)
+                        if (this == null)
+                            return false;
+                        if (this._audioSource.clip != null &&
+                            this._audioSource.clip.loadState == AudioDataLoadState.Loaded)
+                            break;
+                        // load balancing (需使用 Update 輪詢，TimeScale 為 0 時不會調用 FixedUpdate，會導致該期間無法完成準備)
+                        await UniTask.Yield(PlayerLoopTiming.Update, cts.Token);
+                    } while (true);
+                    Logging.Print<Logger>($"{this.mediaName} audio is prepared");
+                }
+                catch (OperationCanceledException ex)
+                {
+                    Logging.PrintException<Logger>(ex);
+                    return false;
+                }
             }
             #endregion
 
@@ -197,6 +223,24 @@ namespace OxGFrame.MediaFrame.AudioFrame
             this.ProcessLooping(this._audioSource, dt);
         }
 
+        internal sealed override bool IsPlayerAdvancingAtZeroTimeScale()
+        {
+            if (this._audioSource == null)
+                return false;
+
+            // AudioSource 的播放不受 TimeScale 影響，僅 AudioListener.pause 時會跟著暫停 (除非有啟用 ignoreListenerPause)
+            return !AudioListener.pause || this._audioSource.ignoreListenerPause;
+        }
+
+        internal sealed override bool IsPlayerPausedByAudioListener()
+        {
+            if (this._audioSource == null)
+                return false;
+
+            // AudioListener.pause 時 AudioSource 會跟著暫停 (除非有啟用 ignoreListenerPause)
+            return AudioListener.pause && !this._audioSource.ignoreListenerPause;
+        }
+
         public sealed override void Play(int loops, float volume)
         {
             if (this._audioSource == null ||
@@ -237,7 +281,10 @@ namespace OxGFrame.MediaFrame.AudioFrame
             this.ResetLength();
             this.ResetLoops();
 
-            this._endEvent?.Invoke();
+            // 先取出並清空結束事件後再調用，避免事件內再次觸發停止 (ex: Stop, StopAll) 時，造成重入的無窮遞迴
+            Action endEvent = this._endEvent;
+            this._endEvent = null;
+            endEvent?.Invoke();
             this._endEvent = null;
 
             this.gameObject.SetActive(false);
@@ -253,6 +300,11 @@ namespace OxGFrame.MediaFrame.AudioFrame
         public sealed override void Pause()
         {
             if (this._audioSource == null)
+                return;
+
+            // 僅允許暫停播放中的音訊 (避免尚未播放或已停止的音訊被標記為暫停，導致後續 Play 或 ResumeAll 時狀態錯亂)
+            if (!this._isPlaying &&
+                !this._audioSource.isPlaying)
                 return;
 
             this._isPlaying = false;
@@ -303,7 +355,10 @@ namespace OxGFrame.MediaFrame.AudioFrame
 
         public sealed override void OnRelease()
         {
-            this._endEvent?.Invoke();
+            // 先取出並清空結束事件後再調用，避免事件內再次觸發釋放時，造成重入的無窮遞迴
+            Action endEvent = this._endEvent;
+            this._endEvent = null;
+            endEvent?.Invoke();
 
             base.OnRelease();
             this._audioSource = null;
